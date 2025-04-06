@@ -47,6 +47,11 @@ dependencies:
   uuid: 4.2.1
   intl: 0.18.1
 
+  # WiFi connection and device setup packages
+  url_launcher: ^6.2.2
+  connectivity_plus: ^5.0.2
+  webview_flutter: ^4.4.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
