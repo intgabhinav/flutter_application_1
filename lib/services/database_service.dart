@@ -8,8 +8,21 @@ class DatabaseService {
   final CollectionReference usersCollection = FirebaseFirestore.instance.collection('users');
   final CollectionReference devicesCollection = FirebaseFirestore.instance.collection('devices');
 
-  Future<bool> addDevice(String uid, String deviceId) async {
+  Future<bool> addDevice(String uid, String deviceId, String deviceName) async {
     try {
+      // First, add the device to the devices collection
+      await devicesCollection.doc(deviceId).set({
+        'deviceId': deviceId,
+        'name': deviceName,
+        'ownerId': uid,
+        'status': 'active',
+        'createdAt': FieldValue.serverTimestamp(),
+        'lastActive': FieldValue.serverTimestamp(),
+        'type': 'default',
+        'settings': {},
+      });
+
+      // Then, add only the device ID to the user's devices list
       DocumentSnapshot userDoc = await usersCollection.doc(uid).get();
 
       if (userDoc.exists && userDoc.data() != null) {
@@ -20,20 +33,23 @@ class DatabaseService {
           devices = userData['devices'] as List<dynamic>;
         }
 
+        // Add only the device ID
         devices.add(deviceId);
 
         await usersCollection.doc(uid).update({
           'devices': devices,
         });
 
-        print('Device ID added successfully: $deviceId');
+        print('Device added successfully: $deviceId - $deviceName');
         return true;
       } else {
-        print('User not found, cannot add device ID');
+        print('User not found, cannot add device');
+        // Try to delete the device document since we couldn't add it to the user
+        await devicesCollection.doc(deviceId).delete();
         return false;
       }
     } catch (e) {
-      print('Error adding device ID: $e');
+      print('Error adding device: $e');
       return false;
     }
   }
@@ -43,7 +59,15 @@ class DatabaseService {
       DocumentSnapshot userDoc = await usersCollection.doc(user.uid).get();
 
       if (userDoc.exists && userDoc.data() != null) {
-        return userDoc.data() as Map<String, dynamic>;
+        Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
+
+        // Fetch the full device details for each device ID
+        List<Map<String, dynamic>> deviceDetails = await getUserDevices(user.uid);
+
+        // Replace the devices array with the full device details
+        userData['devices'] = deviceDetails;
+
+        return userData;
       } else {
         // Create a new user document if it doesn't exist
         Map<String, dynamic> userData = {
@@ -69,34 +93,25 @@ class DatabaseService {
 
   Future<void> updateDeviceStatus(String uid, String deviceId, String newStatus) async {
     try {
-      DocumentSnapshot userDoc = await usersCollection.doc(uid).get();
+      // Update status only in the devices collection
+      await devicesCollection.doc(deviceId).update({
+        'status': newStatus,
+        'lastActive': FieldValue.serverTimestamp(),
+      });
 
-      if (userDoc.exists && userDoc.data() != null) {
-        Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
-
-        if (userData.containsKey('devices') && userData['devices'] is List) {
-          List<dynamic> devices = userData['devices'] as List<dynamic>;
-
-          for (int i = 0; i < devices.length; i++) {
-            if (devices[i] is Map && devices[i]['id'] == deviceId) {
-              devices[i]['status'] = newStatus;
-              devices[i]['lastActive'] = FieldValue.serverTimestamp();
-              break;
-            }
-          }
-
-          await usersCollection.doc(uid).update({
-            'devices': devices,
-          });
-        }
-      }
+      print('Device status updated to $newStatus for device: $deviceId');
     } catch (e) {
       print('Error updating device status: $e');
+      throw e; // Re-throw to handle in the UI
     }
   }
 
   Future<void> deleteDeviceCompletely(String uid, String deviceId) async {
     try {
+      // Delete from devices collection
+      await devicesCollection.doc(deviceId).delete();
+
+      // Remove device ID from user's devices list
       DocumentSnapshot userDoc = await usersCollection.doc(uid).get();
 
       if (userDoc.exists && userDoc.data() != null) {
@@ -105,17 +120,19 @@ class DatabaseService {
         if (userData.containsKey('devices') && userData['devices'] is List) {
           List<dynamic> devices = userData['devices'] as List<dynamic>;
 
-          devices.removeWhere((device) =>
-            device is Map && device['id'] == deviceId
-          );
+          // Remove the device ID from the list
+          devices.remove(deviceId);
 
           await usersCollection.doc(uid).update({
             'devices': devices,
           });
         }
       }
+
+      print('Device deleted successfully: $deviceId');
     } catch (e) {
       print('Error deleting device: $e');
+      throw e; // Re-throw to handle in the UI
     }
   }
 
@@ -160,6 +177,68 @@ class DatabaseService {
     }
 
     // Return an empty list if no data is found or an error occurs
+    return [];
+  }
+
+  // Get device details from the devices collection
+  Future<Map<String, dynamic>> getDeviceDetails(String deviceId) async {
+    try {
+      DocumentSnapshot deviceDoc = await devicesCollection.doc(deviceId).get();
+
+      if (deviceDoc.exists && deviceDoc.data() != null) {
+        Map<String, dynamic> deviceData = deviceDoc.data() as Map<String, dynamic>;
+
+        // Ensure the data has the expected format for DeviceModel
+        return {
+          'id': deviceId,
+          'name': deviceData['name'] ?? 'Unknown Device',
+          'status': deviceData['status'] ?? 'offline',
+          'lastActive': deviceData['lastActive'],
+          'settings': deviceData['settings'] ?? {},
+          'type': deviceData['type'] ?? 'default',
+          'createdAt': deviceData['createdAt'],
+        };
+      }
+    } catch (e) {
+      print('Error getting device details: $e');
+    }
+
+    // Return default data if device not found or error occurs
+    return {
+      'id': deviceId,
+      'name': 'Unknown Device',
+      'status': 'offline',
+      'settings': {},
+    };
+  }
+
+  // Get all devices for a user by fetching each device from the devices collection
+  Future<List<Map<String, dynamic>>> getUserDevices(String uid) async {
+    try {
+      // First get the user document to get the list of device IDs
+      DocumentSnapshot userDoc = await usersCollection.doc(uid).get();
+
+      if (userDoc.exists && userDoc.data() != null) {
+        Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
+
+        if (userData.containsKey('devices') && userData['devices'] is List) {
+          List<dynamic> deviceIds = userData['devices'] as List<dynamic>;
+          List<Map<String, dynamic>> devices = [];
+
+          // Fetch each device's details
+          for (String deviceId in deviceIds) {
+            Map<String, dynamic> deviceData = await getDeviceDetails(deviceId);
+            devices.add(deviceData);
+          }
+
+          return devices;
+        }
+      }
+    } catch (e) {
+      print('Error getting user devices: $e');
+    }
+
+    // Return an empty list if no devices found or error occurs
     return [];
   }
 }

@@ -14,7 +14,15 @@ class AddDeviceScreen extends StatefulWidget {
 class _AddDeviceScreenState extends State<AddDeviceScreen> {
   final _formKey = GlobalKey<FormState>();
   final DatabaseService _database = DatabaseService();
-  
+  final TextEditingController _deviceNameController = TextEditingController();
+
+  @override
+  void dispose() {
+    // Clean up the controller when the widget is disposed
+    _deviceNameController.dispose();
+    super.dispose();
+  }
+
   bool _isLoading = false;
   String? _errorMessage;
 
@@ -46,6 +54,7 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
                     ),
                     const SizedBox(height: 20),
                     TextFormField(
+                      controller: _deviceNameController,
                       decoration: const InputDecoration(
                         labelText: 'Device Name',
                         border: OutlineInputBorder(),
@@ -59,6 +68,10 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
                       },
                       onChanged: (value) {
                         setState(() {
+                          // Clear any error messages when the user types
+                          if (_errorMessage != null) {
+                            _errorMessage = null;
+                          }
                         });
                       },
                     ),
@@ -138,12 +151,15 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
       });
 
       try {
+        // Get the device name from the controller
+        final deviceName = _deviceNameController.text.trim();
+
         // Generate a unique device ID
         final deviceId = const Uuid().v4();
-        
-        // Add only the device ID to the user's account
-        final success = await _database.addDevice(uid, deviceId);
-        
+
+        // Add the device to both the devices collection and the user's account
+        final success = await _database.addDevice(uid, deviceId, deviceName);
+
         if (success) {
           // Return to the previous screen
           if (mounted) {
