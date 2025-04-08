@@ -5,6 +5,7 @@ class DeviceModel {
   final String id;
   final String name;
   final String status;
+  final bool state;  // New field for ON/OFF state
   final DateTime? lastActive;
   final Map<String, dynamic> settings;
 
@@ -12,6 +13,7 @@ class DeviceModel {
     required this.id,
     required this.name,
     required this.status,
+    this.state = false,  // Default to OFF
     this.lastActive,
     required this.settings,
   });
@@ -28,6 +30,7 @@ class DeviceModel {
       id: data['id'] ?? '',
       name: data['name'] ?? 'Unknown Device',
       status: data['status'] ?? 'offline',
+      state: data['state'] ?? false,  // Default to OFF if not present
       lastActive: lastActiveDate,
       settings: data['settings'] is Map
           ? Map<String, dynamic>.from(data['settings'] as Map)
@@ -41,6 +44,7 @@ class DeviceModel {
       'id': id,
       'name': name,
       'status': status,
+      'state': state,
       'lastActive': lastActive != null ? Timestamp.fromDate(lastActive!) : Timestamp.now(),
       'settings': settings,
     };

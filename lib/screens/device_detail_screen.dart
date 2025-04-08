@@ -100,6 +100,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                               _buildInfoRow('ID', widget.device.id),
                               _buildInfoRow('Name', widget.device.name),
                               _buildInfoRow('Status', widget.device.status),
+                              _buildInfoRow('State', widget.device.state ? 'ON' : 'OFF'),
                               if (widget.device.lastActive != null)
                                 _buildInfoRow(
                                   'Last Active',
@@ -197,23 +198,12 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   }
   
   Widget _buildStatusIndicator(String status) {
-    Color statusColor;
-    switch (status.toLowerCase()) {
-      case 'online':
-        statusColor = Colors.green;
-        break;
-      case 'offline':
-        statusColor = Colors.grey;
-        break;
-      case 'error':
-        statusColor = Colors.red;
-        break;
-      default:
-        statusColor = Colors.orange;
-    }
+    bool isOnline = status.toLowerCase() == 'online';
+    Color statusColor = isOnline ? Colors.green : Colors.red;
     
     return Row(
       children: [
+        // Status indicator (online/offline)
         Container(
           width: 12,
           height: 12,
@@ -231,8 +221,121 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
             fontWeight: FontWeight.bold,
           ),
         ),
+        const SizedBox(width: 20),
+        // ON/OFF state toggle
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(
+            color: widget.device.state ? Colors.green : Colors.red,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          widget.device.state ? 'ON' : 'OFF',
+          style: TextStyle(
+            fontSize: 14,
+            color: widget.device.state ? Colors.green : Colors.red,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Switch(
+          value: widget.device.state,
+          onChanged: (value) {
+            _toggleDeviceState(value);
+          },
+          activeColor: Colors.green,
+          activeTrackColor: Colors.green.shade100,
+          inactiveThumbColor: Colors.red,
+          inactiveTrackColor: Colors.red.shade100,
+        ),
       ],
     );
+  }
+  
+  Future<void> _toggleDeviceState(bool isOn) async {
+    final user = Provider.of<User?>(context, listen: false);
+    if (user != null) {
+      setState(() {
+        _isLoading = true;
+      });
+      
+      try {
+        await _database.setDeviceState(user.uid, widget.device.id, isOn);
+        
+        // Refresh the data
+        await _loadDeviceData();
+        
+        // Show a snackbar to confirm the action
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Device turned ${isOn ? 'ON' : 'OFF'}'),
+              backgroundColor: isOn ? Colors.green : Colors.red,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      } catch (e) {
+        print('Error toggling device state: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to toggle device state'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      } finally {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+  
+  // Keep the original method for backward compatibility
+  Future<void> _toggleDeviceStatus(bool isOnline) async {
+    final user = Provider.of<User?>(context, listen: false);
+    if (user != null) {
+      setState(() {
+        _isLoading = true;
+      });
+      
+      try {
+        await _database.updateDeviceStatus(user.uid, widget.device.id, isOnline ? 'online' : 'offline');
+        
+        // Refresh the data
+        await _loadDeviceData();
+        
+        // Show a snackbar to confirm the action
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Device status updated to ${isOnline ? 'online' : 'offline'}'),
+              backgroundColor: isOnline ? Colors.green : Colors.red,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      } catch (e) {
+        print('Error updating device status: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to update device status'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      } finally {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
   
   Widget _buildInfoRow(String label, String value) {
@@ -299,12 +402,24 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
             fontSize: 14,
           ),
         ),
-        subtitle: Text(
-          'Status: ${data.status}',
-          style: TextStyle(
-            fontSize: 12,
-            color: data.status.toLowerCase() == 'online' ? Colors.green : Colors.grey,
-          ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Status: ${data.status}',
+              style: TextStyle(
+                fontSize: 12,
+                color: data.status.toLowerCase() == 'online' ? Colors.green : Colors.red,
+              ),
+            ),
+            Text(
+              'State: ${data.state ? 'ON' : 'OFF'}',
+              style: TextStyle(
+                fontSize: 12,
+                color: data.state ? Colors.green : Colors.red,
+              ),
+            ),
+          ],
         ),
         children: [
           Padding(

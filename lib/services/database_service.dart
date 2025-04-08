@@ -10,17 +10,26 @@ class DatabaseService {
 
   Future<bool> addDevice(String uid, String deviceId, String deviceName) async {
     try {
+      print('Adding new device: $deviceId, $deviceName');
       // First, add the device to the devices collection
       await devicesCollection.doc(deviceId).set({
         'deviceId': deviceId,
         'name': deviceName,
         'ownerId': uid,
         'status': 'active',
+        'state': false,  // Default to OFF
         'createdAt': FieldValue.serverTimestamp(),
         'lastActive': FieldValue.serverTimestamp(),
         'type': 'default',
         'settings': {},
       });
+      
+      // Verify the device was added with the state field
+      DocumentSnapshot deviceDoc = await devicesCollection.doc(deviceId).get();
+      if (deviceDoc.exists) {
+        Map<String, dynamic> data = deviceDoc.data() as Map<String, dynamic>;
+        print('Device added successfully with state: ${data['state']}');
+      }
 
       // Then, add only the device ID to the user's devices list
       DocumentSnapshot userDoc = await usersCollection.doc(uid).get();
@@ -105,6 +114,36 @@ class DatabaseService {
       throw e; // Re-throw to handle in the UI
     }
   }
+  
+  // Method to update the device state (ON/OFF)
+  Future<void> setDeviceState(String uid, String deviceId, bool isOn) async {
+    print('DatabaseService.setDeviceState called with uid: $uid, deviceId: $deviceId, isOn: $isOn');
+    try {
+      // First check if the document exists
+      DocumentSnapshot deviceDoc = await devicesCollection.doc(deviceId).get();
+      if (!deviceDoc.exists) {
+        print('Error: Device document does not exist: $deviceId');
+        throw Exception('Device document does not exist');
+      }
+      
+      print('Updating device state in Firestore...');
+      // Update the state field (boolean for on/off)
+      await devicesCollection.doc(deviceId).update({
+        'state': isOn,
+        'lastActive': FieldValue.serverTimestamp(),
+      });
+
+      print('Device state updated to ${isOn ? "ON" : "OFF"} for device: $deviceId');
+      
+      // Verify the update
+      DocumentSnapshot updatedDoc = await devicesCollection.doc(deviceId).get();
+      Map<String, dynamic> data = updatedDoc.data() as Map<String, dynamic>;
+      print('Verified state after update: ${data['state']}');
+    } catch (e) {
+      print('Error updating device state: $e');
+      throw e; // Re-throw to handle in the UI
+    }
+  }
 
   Future<void> deleteDeviceCompletely(String uid, String deviceId) async {
     try {
@@ -158,6 +197,7 @@ class DatabaseService {
       'sensorData': {},
       'timestamp': Timestamp.now(),
       'status': 'unknown',
+      'state': false,  // Include the state field with default value
       'reportedBy': '',
     };
   }
@@ -182,32 +222,50 @@ class DatabaseService {
 
   // Get device details from the devices collection
   Future<Map<String, dynamic>> getDeviceDetails(String deviceId) async {
+    print('Getting device details for deviceId: $deviceId');
     try {
       DocumentSnapshot deviceDoc = await devicesCollection.doc(deviceId).get();
 
       if (deviceDoc.exists && deviceDoc.data() != null) {
         Map<String, dynamic> deviceData = deviceDoc.data() as Map<String, dynamic>;
+        print('Device document found: $deviceId');
+        print('Raw device data: $deviceData');
+        
+        // Check if state field exists
+        if (deviceData.containsKey('state')) {
+          print('State field exists with value: ${deviceData['state']}');
+        } else {
+          print('State field does not exist in the document');
+        }
 
         // Ensure the data has the expected format for DeviceModel
-        return {
+        Map<String, dynamic> formattedData = {
           'id': deviceId,
           'name': deviceData['name'] ?? 'Unknown Device',
           'status': deviceData['status'] ?? 'offline',
+          'state': deviceData['state'] ?? false,  // Include the state field
           'lastActive': deviceData['lastActive'],
           'settings': deviceData['settings'] ?? {},
           'type': deviceData['type'] ?? 'default',
           'createdAt': deviceData['createdAt'],
         };
+        
+        print('Formatted device data: $formattedData');
+        return formattedData;
+      } else {
+        print('Device document not found: $deviceId');
       }
     } catch (e) {
       print('Error getting device details: $e');
     }
 
+    print('Returning default device data for: $deviceId');
     // Return default data if device not found or error occurs
     return {
       'id': deviceId,
       'name': 'Unknown Device',
       'status': 'offline',
+      'state': false,  // Include the state field with default value
       'settings': {},
     };
   }

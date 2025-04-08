@@ -5,6 +5,7 @@ class DeviceDataModel {
   final Map<String, dynamic> sensorData;
   final DateTime timestamp;
   final String status;
+  final bool state;  // New field for ON/OFF state
   final String reportedBy; // Device or user ID that reported this data
 
   DeviceDataModel({
@@ -12,6 +13,7 @@ class DeviceDataModel {
     required this.sensorData,
     required this.timestamp,
     required this.status,
+    this.state = false,  // Default to OFF
     required this.reportedBy,
   });
 
@@ -30,6 +32,7 @@ class DeviceDataModel {
           : {},
       timestamp: timestampDate,
       status: data['status'] ?? 'unknown',
+      state: data['state'] ?? false,  // Default to OFF if not present
       reportedBy: data['reportedBy'] ?? '',
     );
   }
@@ -41,6 +44,7 @@ class DeviceDataModel {
       'sensorData': sensorData,
       'timestamp': Timestamp.fromDate(timestamp),
       'status': status,
+      'state': state,
       'reportedBy': reportedBy,
     };
   }

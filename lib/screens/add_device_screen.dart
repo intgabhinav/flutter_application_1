@@ -6,6 +6,10 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import 'dart:io' show Platform;
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'dart:async';
+import 'dart:math' show min;
 
 // Import our services and screens
 import 'package:flutter_application_1/services/wifi_service.dart';
@@ -36,8 +40,9 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
 
   bool _isLoading = false;
   String? _errorMessage;
+  bool _isScanning = false;
 
-  // Mock device information that would normally come from a scan
+  // Device information from the scan
   Map<String, dynamic>? _foundDevice;
 
   @override
@@ -168,7 +173,7 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
     );
   }
 
-  // Step 2: Connect to device WiFi
+  // Step 2: Connect to device WiFi and scan for devices
   Widget _buildSearchingStep(ThemeData theme) {
     return Padding(
       padding: const EdgeInsets.all(24.0),
@@ -176,15 +181,15 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Icon(
-            Icons.wifi,
+          Icon(
+            _isScanning ? Icons.search : Icons.wifi,
             size: 80,
-            color: Colors.blue,
+            color: _isScanning ? Colors.green : Colors.blue,
           ),
           const SizedBox(height: 32),
-          const Text(
-            'Connect to Device WiFi',
-            style: TextStyle(
+          Text(
+            _isScanning ? 'Scanning for Devices...' : 'Connect to Device WiFi',
+            style: const TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.bold,
             ),
@@ -208,113 +213,142 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
               ),
             ),
           const SizedBox(height: 24),
-          _isLoading
-              ? Column(
-                  children: [
-                    const CircularProgressIndicator(),
-                    const SizedBox(height: 24),
-                    const Text(
-                      'Opening WiFi settings...',
-                      style: TextStyle(fontSize: 16),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                )
-              : Column(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.amber.shade50,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.amber.shade200),
-                      ),
-                      child: Column(
+          
+          if (_isLoading)
+            Column(
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 24),
+                Text(
+                  _isScanning ? 'Scanning for devices...' : 'Opening WiFi settings...',
+                  style: const TextStyle(fontSize: 16),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            )
+          else if (_isScanning)
+            // Show scanning animation and feedback
+            Column(
+              children: [
+                const SizedBox(
+                  height: 100,
+                  width: 100,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 8,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.green),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                const Text(
+                  'Looking for ESP devices...',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'This may take a few moments',
+                  style: TextStyle(fontSize: 14),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            )
+          else
+            // Show WiFi connection instructions
+            Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.amber.shade200),
+                  ),
+                  child: Column(
+                    children: [
+                      const Row(
                         children: [
-                          const Row(
-                            children: [
-                              Icon(Icons.info_outline, color: Colors.amber),
-                              SizedBox(width: 12),
-                              Expanded(
-                                child: Text(
-                                  'You must connect to the device\'s WiFi network before continuing',
-                                  style: TextStyle(fontWeight: FontWeight.bold),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          ElevatedButton.icon(
-                            icon: const Icon(Icons.settings),
-                            label: const Text('Open WiFi Settings'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.blue,
-                              foregroundColor: Colors.white,
+                          Icon(Icons.info_outline, color: Colors.amber),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'You must connect to the device\'s WiFi network before continuing',
+                              style: TextStyle(fontWeight: FontWeight.bold),
                             ),
-                            onPressed: () {
-                              _connectToDeviceWifi();
-                            },
                           ),
                         ],
                       ),
-                    ),
-                    const SizedBox(height: 24),
-                    Card(
-                      elevation: 4,
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
+                      const SizedBox(height: 16),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.settings),
+                        label: const Text('Open WiFi Settings'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue,
+                          foregroundColor: Colors.white,
+                        ),
+                        onPressed: () {
+                          _connectToDeviceWifi();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Card(
+                  elevation: 4,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(Icons.wifi, color: Colors.green),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Skynet-AutoConnect',
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                    color: theme.colorScheme.primary,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 16),
-                            const Text(
-                              'Steps to connect:',
+                            const Icon(Icons.wifi, color: Colors.green),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Skynet-AutoConnect',
                               style: TextStyle(
-                                fontSize: 16,
+                                fontSize: 18,
                                 fontWeight: FontWeight.bold,
+                                color: theme.colorScheme.primary,
                               ),
-                            ),
-                            const SizedBox(height: 8),
-                            const Text(
-                              '1. Tap "Open WiFi Settings" below\n'
-                              '2. Connect to "Skynet-AutoConnect" network\n'
-                              '3. Return to this app and tap "I\'m Connected" below',
-                              style: TextStyle(fontSize: 14),
-                              textAlign: TextAlign.left,
                             ),
                           ],
                         ),
-                      ),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Steps to connect:',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          '1. Tap "Open WiFi Settings" below\n'
+                          '2. Connect to "Skynet-AutoConnect" network\n'
+                          '3. Return to this app and tap "Scan for Devices" below',
+                          style: TextStyle(fontSize: 14),
+                          textAlign: TextAlign.left,
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 24),
-                    const Text(
-                      'Once connected, we\'ll automatically open the device configuration page.',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontStyle: FontStyle.italic,
-                        color: Colors.grey,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
+                  ),
                 ),
+                const SizedBox(height: 24),
+                const Text(
+                  'Once connected, we\'ll scan for available ESP devices.',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontStyle: FontStyle.italic,
+                    color: Colors.grey,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
           const Spacer(),
 
-          if (!_isLoading)
+          if (!_isLoading && !_isScanning)
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: theme.colorScheme.primary,
@@ -325,11 +359,35 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
                 ),
               ),
               onPressed: () {
-                // Check if connected to the right network and open captive portal
-                _openCaptivePortal();
+                // Start scanning for devices
+                _startDeviceScan();
               },
               child: const Text(
-                'I\'m Connected',
+                'Scan for Devices',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          if (_isScanning)
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              onPressed: () {
+                // Stop scanning
+                setState(() {
+                  _isScanning = false;
+                });
+              },
+              child: const Text(
+                'Stop Scanning',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -343,6 +401,7 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
                 onPressed: () {
                   setState(() {
                     _currentStep = STEP_POWER_DEVICE;
+                    _isScanning = false;
                   });
                 },
                 child: const Text('Back'),
@@ -368,7 +427,7 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
           ),
           const SizedBox(height: 32),
           const Text(
-            'Device Found!',
+            'ESP Device Found!',
             style: TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.bold,
@@ -376,9 +435,9 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 24),
-          Text(
-            'We found the following device:',
-            style: const TextStyle(fontSize: 16),
+          const Text(
+            'We found the following ESP device:',
+            style: TextStyle(fontSize: 16),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 16),
@@ -388,10 +447,10 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 children: [
-                  const Icon(Icons.devices, color: Colors.blue, size: 48),
+                  const Icon(Icons.memory, color: Colors.blue, size: 48),
                   const SizedBox(height: 16),
                   Text(
-                    _foundDevice?['model'] ?? 'Smart Device',
+                    _foundDevice?['model'] ?? 'ESP Device',
                     style: const TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
@@ -399,21 +458,44 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'ID: ${_foundDevice?['id'] ?? 'Unknown'}',
+                    'Chip ID: ${_foundDevice?['chipId'] ?? 'Unknown'}',
                     style: const TextStyle(
                       fontSize: 14,
                       color: Colors.grey,
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  const Chip(
-                    label: Text('Ready to Connect'),
-                    backgroundColor: Colors.green,
-                    labelStyle: TextStyle(color: Colors.white),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.green.shade200),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.check_circle, color: Colors.green, size: 20),
+                        SizedBox(width: 8),
+                        Text(
+                          'Configuration Complete',
+                          style: TextStyle(
+                            color: Colors.green,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            'Your device has been successfully configured and is ready to be registered to your account.',
+            style: TextStyle(fontSize: 14),
+            textAlign: TextAlign.center,
           ),
           const Spacer(),
           ElevatedButton(
@@ -428,8 +510,11 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
             onPressed: () {
               setState(() {
                 _currentStep = STEP_NAMING_DEVICE;
-                // Pre-fill the device name with the model
-                _deviceNameController.text = _foundDevice?['model'] ?? 'Smart Device';
+                // Pre-fill the device name with a default name including the chip ID
+                final chipId = (_foundDevice?['chipId'] ?? '').toString();
+                _deviceNameController.text = chipId.isNotEmpty 
+                    ? 'ESP Device (${chipId.substring(0, min(6, chipId.length))})'
+                    : 'ESP Device';
               });
             },
             child: const Text(
@@ -674,10 +759,40 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
     }
   }
 
-  // Open the captive portal at 192.168.4.1
-  Future<void> _openCaptivePortal() async {
+  // Get the chip ID from the ESP device
+  Future<String?> _getChipId() async {
+    try {
+      // Set a timeout for the HTTP request
+      final response = await http.get(Uri.parse('http://192.168.4.1/cid'))
+          .timeout(const Duration(seconds: 10));
+      
+      if (response.statusCode == 200) {
+        // Return the chip ID from the response, ensuring it's a valid string
+        final chipId = response.body.trim();
+        if (chipId.isNotEmpty) {
+          return chipId;
+        } else {
+          debugPrint('Empty chip ID received');
+          return 'ESP-${DateTime.now().millisecondsSinceEpoch % 10000}';
+        }
+      } else {
+        debugPrint('Failed to get chip ID: ${response.statusCode}');
+        // Generate a fallback ID if we can't get the real one
+        return 'ESP-${DateTime.now().millisecondsSinceEpoch % 10000}';
+      }
+    } on TimeoutException {
+      debugPrint('Timeout getting chip ID');
+      return 'ESP-${DateTime.now().millisecondsSinceEpoch % 10000}';
+    } catch (e) {
+      debugPrint('Error getting chip ID: $e');
+      return 'ESP-${DateTime.now().millisecondsSinceEpoch % 10000}';
+    }
+  }
+
+  // Start scanning for ESP devices
+  Future<void> _startDeviceScan() async {
     setState(() {
-      _isLoading = true;
+      _isScanning = true;
       _errorMessage = null;
     });
 
@@ -688,44 +803,32 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
       bool isWifiConnected = await wifiService.isConnectedToWifi();
 
       if (isWifiConnected) {
-        // Open the captive portal in a WebView
-        if (mounted) {
+        // First, try to get the chip ID from the device
+        final chipId = await _getChipId();
+        
+        if (chipId == null) {
           setState(() {
-            _isLoading = false;
+            _isScanning = false;
+            _errorMessage = 'Could not find any ESP devices. Make sure you are connected to the correct WiFi network.';
           });
-
-          // Navigate to the captive portal screen
-          final result = await Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => CaptivePortalScreen(
-                url: 'http://192.168.4.1',
-                onSetupComplete: () {
-                  // When setup is complete, pop the screen and return true
-                  Navigator.of(context).pop(true);
-                },
-              ),
-            ),
-          );
-
-          // If the result is true, it means setup was completed successfully
-          if (result == true) {
-            // After successful connection, simulate finding a device
-            // In a real app, you would get this information from the device
-            _foundDevice = {
-              'id': const Uuid().v4(),
-              'model': 'Smart Sensor XYZ',
-              'type': 'sensor',
-            };
-
-            setState(() {
-              _currentStep = STEP_DEVICE_FOUND;
-            });
-          }
+          return;
         }
+        
+        // We found a device, create the device object
+        final device = {
+          'id': chipId,
+          'model': 'ESP Device',
+          'type': 'esp',
+          'chipId': chipId,
+        };
+        
+        // Set the found device and proceed to setup
+        _foundDevice = device;
+        _openDeviceSetup(_foundDevice!);
       } else {
         // Not connected to WiFi, show a more prominent error and guide the user
         setState(() {
-          _isLoading = false;
+          _isScanning = false;
           _errorMessage = 'Not connected to WiFi. Please tap "Open WiFi Settings" and connect to the "Skynet-AutoConnect" network.';
         });
 
@@ -767,10 +870,82 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
       }
     } catch (e) {
       setState(() {
-        _isLoading = false;
-        _errorMessage = 'Failed to connect to device: ${e.toString()}';
+        _isScanning = false;
+        _errorMessage = 'Failed to scan for devices: ${e.toString()}';
       });
     }
+  }
+  
+  // Open the device setup process for a specific device
+  Future<void> _openDeviceSetup(Map<String, dynamic> device) async {
+    setState(() {
+      _isLoading = true;
+      _isScanning = false;
+    });
+    
+    // Show a dialog with the device info
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: const Text("Device Found"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 20),
+              const Text("ESP Device detected!"),
+              const SizedBox(height: 10),
+              Text("Chip ID: ${device['chipId']}"),
+              const SizedBox(height: 10),
+              const Text("Opening configuration page..."),
+            ],
+          ),
+        ),
+      );
+      
+      // Wait a moment to show the dialog before proceeding
+      await Future.delayed(const Duration(seconds: 2));
+      
+      // Dismiss the dialog if it's still showing
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+    }
+
+    // Open the captive portal in a WebView
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+      });
+      
+      // Navigate to the captive portal screen
+      final result = await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => CaptivePortalScreen(
+            url: 'http://192.168.4.1',
+            onSetupComplete: () {
+              // When setup is complete, pop the screen and return true
+              Navigator.of(context).pop(true);
+            },
+          ),
+        ),
+      );
+
+      // If the result is true, it means setup was completed successfully
+      if (result == true) {
+        setState(() {
+          _currentStep = STEP_DEVICE_FOUND;
+        });
+      }
+    }
+  }
+  
+  // Legacy method for backward compatibility
+  Future<void> _openCaptivePortal() async {
+    // Start the device scan instead
+    await _startDeviceScan();
   }
 
   Future<void> _registerDevice(String? uid) async {
