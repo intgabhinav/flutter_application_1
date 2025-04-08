@@ -8,8 +8,12 @@
 #include <time.h>             // For time functions
 #include <addons/TokenHelper.h>  // Firebase token generation helper
 #include <addons/RTDBHelper.h>   // RTDB helper functions
+#include <ESP8266HTTPUpdateServer.h> // For OTA updates via web interface
+#include <ESP8266mDNS.h>      // For OTA service discovery
+#include <ESP8266httpUpdate.h>  // For HTTP-based OTA updates
 
 // Constants
+#define FIRMWARE_VERSION "1.0.1"  // Current firmware version
 #define SWITCH_PIN 5
 #define CONFIG_MODE_TIMEOUT 300000  // 5 minutes in milliseconds
 #define EEPROM_SIZE 512
@@ -19,12 +23,19 @@
 #define EEPROM_DEVICE_NAME_ADDR 160
 #define EEPROM_DEVICE_ID_ADDR 224  // Store device ID
 #define EEPROM_CONFIG_FLAG_ADDR 288  // Flag to indicate if device is configured
+#define EEPROM_UPDATE_FLAG_ADDR 289  // Flag to indicate if device just completed an update
 
 // Firebase configuration
 #define API_KEY "AIzaSyDwyL3PbGnr5ZwYz-GadsMzIKXy6FMxa7g"  // Replace with your Firebase API Key
 #define PROJECT_ID "thegardenhelper-35b52"  // Replace with your Firebase Project ID
 #define USER_EMAIL "master@skynet.com"  // Replace with your Firebase Auth email
 #define USER_PASSWORD "password"  // Replace with your Firebase Auth password
+
+// Function declarations
+void sendStatusUpdate();
+void updateFirmwareStatus(String status, String availableVersion);
+void updateFirmwareStatusWithTimestamp(String status, String availableVersion);
+void updateFirmwareStatusWithError(String errorMsg, String availableVersion);
 
 // Variables
 bool isConfigured = false;
@@ -50,6 +61,57 @@ DNSServer dnsServer;
 // Web server for configuration portal
 ESP8266WebServer webServer(80);
 
+// OTA update server
+ESP8266HTTPUpdateServer httpUpdater;
+const char* OTA_USERNAME = "admin";  // Username for OTA updates
+const char* OTA_PASSWORD = "admin";  // Password for OTA updates
+bool otaEnabled = false;             // Flag to indicate if OTA is enabled
+
+// Auto update configuration
+bool autoUpdateEnabled = true;       // Default value, will be read from EEPROM
+#define AUTO_UPDATE_CHECK_INTERVAL 60000  // Check for updates every 5 minutes
+unsigned long lastAutoUpdateCheck = 0;
+bool updateInProgress = false;       // Flag to prevent multiple update attempts
+bool justUpdated = false;           // Flag to indicate device just completed an update
+
+// EEPROM backup area - used to preserve settings during OTA updates
+#define EEPROM_BACKUP_ADDR 350
+#define EEPROM_BACKUP_SIZE 128  // Enough to store WiFi credentials and device info
+
+// Function to backup important EEPROM data before OTA update
+void backupEEPROMSettings() {
+  Serial.println("Backing up EEPROM settings before update...");
+  
+  // First, mark that we're doing an update
+  EEPROM.write(EEPROM_UPDATE_FLAG_ADDR, 1);
+  
+  // Backup WiFi credentials and device info
+  for (int i = 0; i < EEPROM_BACKUP_SIZE; i++) {
+    byte value = EEPROM.read(i);  // Read from original location
+    EEPROM.write(EEPROM_BACKUP_ADDR + i, value);  // Write to backup location
+  }
+  
+  EEPROM.commit();
+  Serial.println("EEPROM backup complete");
+}
+
+// Function to restore EEPROM data after an update
+void restoreEEPROMSettings() {
+  Serial.println("Restoring EEPROM settings after update...");
+  
+  // Restore WiFi credentials and device info
+  for (int i = 0; i < EEPROM_BACKUP_SIZE; i++) {
+    byte value = EEPROM.read(EEPROM_BACKUP_ADDR + i);  // Read from backup location
+    EEPROM.write(i, value);  // Write to original location
+  }
+  
+  // Clear the update flag
+  EEPROM.write(EEPROM_UPDATE_FLAG_ADDR, 0);
+  EEPROM.commit();
+  
+  Serial.println("EEPROM restore complete");
+}
+
 void setup() {
   Serial.begin(115200);
   pinMode(SWITCH_PIN, OUTPUT);
@@ -57,6 +119,15 @@ void setup() {
   
   // Initialize EEPROM
   EEPROM.begin(EEPROM_SIZE);
+  
+  // Check if we're coming back from an update
+  if (EEPROM.read(EEPROM_UPDATE_FLAG_ADDR) == 1) {
+    Serial.println("Detected post-update boot");
+    restoreEEPROMSettings();
+    
+    // Set a flag to update the firmware status once connected
+    justUpdated = true;
+  }
   
   // Check if device is already configured
   isConfigured = (EEPROM.read(EEPROM_CONFIG_FLAG_ADDR) == 1);
@@ -103,12 +174,22 @@ void setup() {
       
       // Configure time
       configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+      
+      // If we just completed an update, update the firmware status
+      if (justUpdated) {
+        Serial.println("Device just completed an update, updating status...");
+        updateFirmwareStatusWithTimestamp("updated", FIRMWARE_VERSION);
+        justUpdated = false;
+      }
       Serial.println("Waiting for time sync...");
       while (time(nullptr) < 1510644967) {
         delay(100);
         Serial.print(".");
       }
       Serial.println("\nTime synchronized!");
+      
+      // Setup OTA updates
+      setupOTA();
       
       normalOperationMode();
       return;
@@ -155,7 +236,12 @@ void setupMode() {
   webServer.on("/", handleRoot);
   webServer.on("/configure", handleConfigure);
   webServer.on("/cid", handleCID);
+  webServer.on("/ota_setup", handleOTASetupPage);
   webServer.onNotFound(handleRoot);
+  
+  // Setup OTA update server in setup mode too
+  httpUpdater.setup(&webServer, "/update", OTA_USERNAME, OTA_PASSWORD);
+  
   webServer.begin();
   
   Serial.println("Setup mode active. Connect to WiFi: " + apName);
@@ -173,6 +259,21 @@ void handleCID() {
   String wifiMAC = WiFi.macAddress();
   String cID = String(ESP.getChipId()).c_str();
   webServer.send(200, "text/html", cID);
+}
+
+void handleOTASetupPage() {
+  String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<style>body{font-family:Arial;margin:0;padding:20px;text-align:center;}";
+  html += "button{background-color:#4CAF50;color:white;padding:10px;border:none;cursor:pointer;width:100%;margin-top:20px;}";
+  html += "</style></head><body>";
+  html += "<h1>OTA Update - Setup Mode</h1>";
+  html += "<p>Device ID: " + String(ESP.getChipId()) + "</p>";
+  html += "<p>Firmware Version: " + String(FIRMWARE_VERSION) + "</p>";
+  html += "<a href='/update'><button>Go to Update Page</button></a>";
+  html += "<a href='/'><button style='background-color:#2196F3;'>Back to Setup</button></a>";
+  html += "</body></html>";
+  
+  webServer.send(200, "text/html", html);
 }
 
 void handleRoot() {
@@ -200,7 +301,10 @@ void handleRoot() {
   html += "<label for='deviceId'>Device ID:</label><br>";
   html += "<input type='text' id='deviceId' name='deviceId' value='" + String(ESP.getChipId()) + "' readonly><br>";
   html += "<button type='submit'>Configure Device</button>";
-  html += "</form></body></html>";
+  html += "</form>";
+  html += "<p>Firmware Version: " + String(FIRMWARE_VERSION) + "</p>";
+  html += "<p><a href='/ota_setup'>Update Firmware</a></p>";
+  html += "</body></html>";
   
   webServer.send(200, "text/html", html);
 }
@@ -377,6 +481,17 @@ void normalOperationMode() {
     if (WiFi.status() != WL_CONNECTED) {
       Serial.println("WiFi connection lost, reconnecting...");
       connectToWiFi();
+      
+      // Re-setup OTA if WiFi reconnected
+      if (WiFi.status() == WL_CONNECTED) {
+        setupOTA();
+      }
+    }
+    
+    // Handle OTA updates if enabled
+    if (otaEnabled) {
+      webServer.handleClient();
+      MDNS.update();
     }
     
     // Check for device state changes in Firebase
@@ -391,6 +506,12 @@ void normalOperationMode() {
     if (currentMillis - lastStatusUpdateTime >= 30000) {
       lastStatusUpdateTime = currentMillis;
       sendStatusUpdate();
+    }
+    
+    // Check for firmware updates in Firebase
+    if (currentMillis - lastAutoUpdateCheck >= AUTO_UPDATE_CHECK_INTERVAL) {
+      lastAutoUpdateCheck = currentMillis;
+      checkForFirmwareUpdates();
     }
     
     // Allow the ESP to handle other tasks
@@ -462,6 +583,9 @@ void createInitialDocument() {
   content.set("fields/ipAddress/stringValue", WiFi.localIP().toString());
   content.set("fields/lastActive/integerValue", String(time(nullptr)));
   content.set("fields/name/stringValue", String(deviceName));
+  content.set("fields/firmware/mapValue/fields/currentVersion/stringValue", FIRMWARE_VERSION);
+  content.set("fields/firmware/mapValue/fields/status/stringValue", "up_to_date");
+  content.set("fields/firmware/mapValue/fields/autoUpdateEnabled/booleanValue", autoUpdateEnabled);
   
   if (Firebase.Firestore.createDocument(&fbdo, PROJECT_ID, "", documentPath, content.raw())) {
     Serial.println("Initial document created successfully");
@@ -479,6 +603,439 @@ void updateSwitchState() {
   
   // Set the pin HIGH or LOW based on the state
   digitalWrite(SWITCH_PIN, currentState ? HIGH : LOW);
+}
+
+void setupOTA() {
+  // Set up mDNS responder
+  String hostname = "skynet-" + String(deviceId);
+  if (MDNS.begin(hostname.c_str())) {
+    Serial.println("mDNS responder started: " + hostname);
+    // Add service to mDNS
+    MDNS.addService("http", "tcp", 80);
+  } else {
+    Serial.println("Error setting up mDNS responder!");
+  }
+  
+  // Set up HTTP OTA update server
+  httpUpdater.setup(&webServer, "/update", OTA_USERNAME, OTA_PASSWORD);
+  
+  // Add route for OTA page
+  webServer.on("/ota", HTTP_GET, handleOTAPage);
+  
+  // Start web server for OTA updates
+  webServer.begin();
+  Serial.println("HTTP OTA update server started");
+  Serial.println("OTA URL: http://" + WiFi.localIP().toString() + "/update");
+  
+  otaEnabled = true;
+}
+
+void handleOTAPage() {
+  String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<style>body{font-family:Arial;margin:0;padding:20px;text-align:center;}";
+  html += "button{background-color:#4CAF50;color:white;padding:10px;border:none;cursor:pointer;width:100%;margin-top:20px;}";
+  html += "</style></head><body>";
+  html += "<h1>OTA Update Status</h1>";
+  html += "<p>Device ID: " + String(deviceId) + "</p>";
+  html += "<p>Device Name: " + String(deviceName) + "</p>";
+  html += "<p>IP Address: " + WiFi.localIP().toString() + "</p>";
+  html += "<p>Firmware Version: " + String(FIRMWARE_VERSION) + "</p>";
+  
+  // Show auto-update status (controlled from app)
+  html += "<p>Automatic Updates: " + String(autoUpdateEnabled ? "Enabled" : "Disabled") + "</p>";
+  html += "<p><small>Auto-update setting is controlled from the app</small></p>";
+  
+  html += "<a href='/update'><button>Go to Update Page</button></a>";
+  html += "<p style='margin-top:20px;font-size:0.8em;'>Last update check: " + (lastAutoUpdateCheck > 0 ? String((millis() - lastAutoUpdateCheck) / 1000) + " seconds ago" : "Never") + "</p>";
+  html += "</body></html>";
+  
+  webServer.send(200, "text/html", html);
+}
+
+// handleToggleAutoUpdate function removed - auto-update is now controlled from the app via Firestore
+
+void checkForFirmwareUpdates() {
+  Serial.println("Checking for firmware updates in Firestore...");
+  
+  // Check if Firebase is ready
+  if (!Firebase.ready()) {
+    Serial.println("Firebase is not ready, skipping firmware check");
+    return;
+  }
+  
+  // Don't check if an update is already in progress
+  if (updateInProgress) {
+    Serial.println("Update already in progress, skipping check");
+    return;
+  }
+  
+  // First, check if auto-updates are enabled for this device
+  String deviceDocPath = "devices/" + String(deviceId);
+  bool shouldAutoUpdate = false;
+  
+  if (Firebase.Firestore.getDocument(&fbdo, PROJECT_ID, "", deviceDocPath, "")) {
+    // Parse the JSON response
+    FirebaseJson deviceDoc;
+    deviceDoc.setJsonData(fbdo.payload().c_str());
+    
+    // Extract the auto-update setting
+    FirebaseJsonData autoUpdateResult;
+    deviceDoc.get(autoUpdateResult, "fields/firmware/mapValue/fields/autoUpdateEnabled/booleanValue");
+    
+    if (autoUpdateResult.success) {
+      shouldAutoUpdate = (autoUpdateResult.stringValue == "true");
+      autoUpdateEnabled = shouldAutoUpdate; // Update the local variable for UI
+      Serial.print("Auto-update setting from Firestore: ");
+      Serial.println(shouldAutoUpdate ? "Enabled" : "Disabled");
+    } else {
+      Serial.println("Auto-update setting not found in device document, using default");
+      shouldAutoUpdate = autoUpdateEnabled; // Use the current value
+    }
+  } else {
+    Serial.print("Failed to get device document: ");
+    Serial.println(fbdo.errorReason());
+    shouldAutoUpdate = autoUpdateEnabled; // Use the current value
+  }
+  
+  // Document path in Firestore for firmware
+  String documentPath = "firmware/latest";
+  
+  // Get the document from Firestore
+  if (Firebase.Firestore.getDocument(&fbdo, PROJECT_ID, "", documentPath, "")) {
+    Serial.println("Got firmware document from Firestore");
+    
+    // Parse the JSON response
+    FirebaseJson payload;
+    payload.setJsonData(fbdo.payload().c_str());
+    
+    // Extract the version field
+    FirebaseJsonData versionResult;
+    payload.get(versionResult, "fields/version/stringValue");
+    
+    if (versionResult.success) {
+      String latestVersion = versionResult.stringValue;
+      Serial.print("Latest firmware version: ");
+      Serial.println(latestVersion);
+      
+      // Compare with current version
+      if (latestVersion != String(FIRMWARE_VERSION)) {
+        Serial.println("New firmware version available!");
+        
+        // Extract the URL field
+        FirebaseJsonData urlResult;
+        payload.get(urlResult, "fields/url/stringValue");
+        
+        if (urlResult.success) {
+          String firmwareUrl = urlResult.stringValue;
+          Serial.print("Firmware URL: ");
+          Serial.println(firmwareUrl);
+          
+          // Update firmware status in device document
+          updateFirmwareStatus("update_available", latestVersion);
+          
+          // We already retrieved the auto-update setting from Firestore
+          // shouldAutoUpdate contains the value from the database
+          
+          // Check if we should perform automatic update
+          if (shouldAutoUpdate) {
+            // Extract MD5 hash for verification if available
+            FirebaseJsonData md5Result;
+            payload.get(md5Result, "fields/md5/stringValue");
+            String firmwareMD5 = "";
+            if (md5Result.success) {
+              firmwareMD5 = md5Result.stringValue;
+            }
+            
+            // Perform the update
+            performAutomaticUpdate(firmwareUrl, latestVersion, firmwareMD5);
+          } else {
+            Serial.println("Automatic updates disabled, skipping update");
+          }
+        }
+      } else {
+        Serial.println("Firmware is up to date");
+      }
+    }
+  } else {
+    Serial.print("Failed to get firmware document: ");
+    Serial.println(fbdo.errorReason());
+  }
+}
+
+void updateFirmwareStatus(String status, String availableVersion) {
+  // Document path in Firestore
+  String documentPath = "devices/" + String(deviceId);
+  
+  // Create the document data
+  content.clear();
+  content.set("fields/firmware/mapValue/fields/status/stringValue", status);
+  content.set("fields/firmware/mapValue/fields/currentVersion/stringValue", String(FIRMWARE_VERSION));
+  content.set("fields/firmware/mapValue/fields/availableVersion/stringValue", availableVersion);
+  
+  // Always include the autoUpdateEnabled field to prevent it from disappearing
+  content.set("fields/firmware/mapValue/fields/autoUpdateEnabled/booleanValue", autoUpdateEnabled);
+  
+  // Define the update mask
+  String updateMask = "firmware";
+  
+  if (Firebase.Firestore.patchDocument(&fbdo, PROJECT_ID, "", documentPath, content.raw(), updateMask)) {
+    Serial.println("Firmware status updated successfully");
+  } else {
+    Serial.print("Failed to update firmware status: ");
+    Serial.println(fbdo.errorReason());
+  }
+}
+
+// Update firmware status with timestamp
+void updateFirmwareStatusWithTimestamp(String status, String availableVersion) {
+  // Document path in Firestore
+  String documentPath = "devices/" + String(deviceId);
+  
+  // Get current time
+  time_t now = time(nullptr);
+  struct tm timeinfo;
+  gmtime_r(&now, &timeinfo);
+  char timeStr[30];
+  strftime(timeStr, sizeof(timeStr), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+  
+  // Create the document data
+  content.clear();
+  content.set("fields/firmware/mapValue/fields/status/stringValue", status);
+  content.set("fields/firmware/mapValue/fields/currentVersion/stringValue", String(FIRMWARE_VERSION));
+  content.set("fields/firmware/mapValue/fields/availableVersion/stringValue", availableVersion);
+  content.set("fields/firmware/mapValue/fields/lastUpdated/stringValue", String(timeStr));
+  
+  // Always include the autoUpdateEnabled field to prevent it from disappearing
+  content.set("fields/firmware/mapValue/fields/autoUpdateEnabled/booleanValue", autoUpdateEnabled);
+  
+  // Define the update mask
+  String updateMask = "firmware";
+  
+  if (Firebase.Firestore.patchDocument(&fbdo, PROJECT_ID, "", documentPath, content.raw(), updateMask)) {
+    Serial.println("Firmware status with timestamp updated successfully");
+  } else {
+    Serial.print("Failed to update firmware status: ");
+    Serial.println(fbdo.errorReason());
+  }
+}
+
+// Update firmware status with error and timestamp
+void updateFirmwareStatusWithError(String errorMsg, String availableVersion) {
+  // Document path in Firestore
+  String documentPath = "devices/" + String(deviceId);
+  
+  // Get current time
+  time_t now = time(nullptr);
+  struct tm timeinfo;
+  gmtime_r(&now, &timeinfo);
+  char timeStr[30];
+  strftime(timeStr, sizeof(timeStr), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+  
+  // Create the document data
+  content.clear();
+  content.set("fields/firmware/mapValue/fields/status/stringValue", "update_failed");
+  content.set("fields/firmware/mapValue/fields/currentVersion/stringValue", String(FIRMWARE_VERSION));
+  content.set("fields/firmware/mapValue/fields/availableVersion/stringValue", availableVersion);
+  content.set("fields/firmware/mapValue/fields/lastError/stringValue", errorMsg);
+  content.set("fields/firmware/mapValue/fields/lastUpdated/stringValue", String(timeStr));
+  
+  // Always include the autoUpdateEnabled field to prevent it from disappearing
+  content.set("fields/firmware/mapValue/fields/autoUpdateEnabled/booleanValue", autoUpdateEnabled);
+  
+  // Define the update mask
+  String updateMask = "firmware";
+  
+  if (Firebase.Firestore.patchDocument(&fbdo, PROJECT_ID, "", documentPath, content.raw(), updateMask)) {
+    Serial.println("Firmware error status updated successfully");
+  } else {
+    Serial.print("Failed to update firmware status: ");
+    Serial.println(fbdo.errorReason());
+  }
+}
+
+// Prepare for update by backing up settings and setting flags
+void prepareForUpdate() {
+  // Backup EEPROM settings before starting the update
+  backupEEPROMSettings();
+}
+
+void performAutomaticUpdate(String firmwareUrl, String newVersion, String expectedMD5) {
+  Serial.println("Starting automatic firmware update process...");
+  
+  // Print system information for debugging
+  Serial.println("--- System Information ---");
+  Serial.print("Free heap: ");
+  Serial.println(ESP.getFreeHeap());
+  Serial.print("Free sketch space: ");
+  Serial.println(ESP.getFreeSketchSpace());
+  Serial.print("Sketch size: ");
+  Serial.println(ESP.getSketchSize());
+  Serial.print("Flash chip size: ");
+  Serial.println(ESP.getFlashChipSize());
+  Serial.print("Flash chip real size: ");
+  Serial.println(ESP.getFlashChipRealSize());
+  Serial.println("------------------------");
+  
+  // Set update in progress flag
+  updateInProgress = true;
+  
+  // Update status in Firestore
+  updateFirmwareStatus("updating", newVersion);
+  
+  // Prepare for update by backing up EEPROM settings
+  prepareForUpdate();
+  
+  // Configure secure connection if URL is HTTPS
+  if (firmwareUrl.startsWith("https")) {
+    Serial.println("Using secure connection for update");
+    
+    // For now, we'll use the default secure client
+    WiFiClientSecure client;
+    client.setInsecure(); // Skip certificate validation for simplicity
+    
+    // Set callback for update progress
+    ESPhttpUpdate.onProgress([](int progress, int total) {
+      Serial.printf("Update progress: %d%%\r", (progress / (total / 100)));
+    });
+    
+    // Set callbacks for update events
+    ESPhttpUpdate.onStart([]() {
+      Serial.println("Update start");
+    });
+    
+    ESPhttpUpdate.onEnd([]() {
+      Serial.println("Update end");
+    });
+    
+    // Store a copy of newVersion for the error handler
+    String updateVersion = newVersion;
+    
+    ESPhttpUpdate.onError([updateVersion](int error) {
+      Serial.printf("Update error: %d\n", error);
+      
+      // Provide more detailed error information
+      if (error == 4) {
+        Serial.println("ERROR[4]: Not Enough Space - The firmware binary is too large for the available space");
+        Serial.println("Solutions:");
+        Serial.println("1. Reduce firmware size by removing unused libraries or features");
+        Serial.println("2. Check Arduino IDE flash size configuration (Tools > Flash Size)");
+        Serial.println("3. Use a partition scheme with more space for OTA updates");
+      }
+      
+      // Reset update in progress flag
+      updateInProgress = false;
+      
+      // Update status in Firestore with error details
+      updateFirmwareStatusWithError("ERROR[" + String(error) + "]: " + 
+                                   (error == 4 ? "Not Enough Space" : "Unknown Error"), 
+                                   updateVersion);
+    });
+    
+    // Start the update process
+    Serial.println("Downloading and installing update...");
+    t_httpUpdate_return ret = ESPhttpUpdate.update(client, firmwareUrl);
+    
+    // Handle update result
+    switch (ret) {
+      case HTTP_UPDATE_FAILED:
+        Serial.printf("HTTP update failed: (%d): %s\n", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
+        
+        // Check for specific error codes
+        if (ESPhttpUpdate.getLastError() == 4) {
+          Serial.println("Not Enough Space error detected. The firmware binary is too large.");
+          updateFirmwareStatusWithError("Not Enough Space", newVersion);
+        } else {
+          updateFirmwareStatusWithError("Update Failed: " + String(ESPhttpUpdate.getLastErrorString()), newVersion);
+        }
+        
+        updateInProgress = false;
+        break;
+        
+      case HTTP_UPDATE_NO_UPDATES:
+        Serial.println("No updates available");
+        updateInProgress = false;
+        updateFirmwareStatus("up_to_date", "");
+        break;
+        
+      case HTTP_UPDATE_OK:
+        Serial.println("Update successful! Rebooting...");
+        // The device will reboot automatically after a successful update
+        break;
+    }
+  } else {
+    // Non-secure connection
+    WiFiClient client;
+    
+    // Set callback for update progress
+    ESPhttpUpdate.onProgress([](int progress, int total) {
+      Serial.printf("Update progress: %d%%\r", (progress / (total / 100)));
+    });
+    
+    // Set callbacks for update events
+    ESPhttpUpdate.onStart([]() {
+      Serial.println("Update start");
+    });
+    
+    ESPhttpUpdate.onEnd([]() {
+      Serial.println("Update end");
+    });
+    
+    // Store a copy of newVersion for the error handler
+    String updateVersion = newVersion;
+    
+    ESPhttpUpdate.onError([updateVersion](int error) {
+      Serial.printf("Update error: %d\n", error);
+      
+      // Provide more detailed error information
+      if (error == 4) {
+        Serial.println("ERROR[4]: Not Enough Space - The firmware binary is too large for the available space");
+        Serial.println("Solutions:");
+        Serial.println("1. Reduce firmware size by removing unused libraries or features");
+        Serial.println("2. Check Arduino IDE flash size configuration (Tools > Flash Size)");
+        Serial.println("3. Use a partition scheme with more space for OTA updates");
+      }
+      
+      // Reset update in progress flag
+      updateInProgress = false;
+      
+      // Update status in Firestore with error details
+      updateFirmwareStatusWithError("ERROR[" + String(error) + "]: " + 
+                                   (error == 4 ? "Not Enough Space" : "Unknown Error"), 
+                                   updateVersion);
+    });
+    
+    // Start the update process
+    Serial.println("Downloading and installing update...");
+    t_httpUpdate_return ret = ESPhttpUpdate.update(client, firmwareUrl);
+    
+    // Handle update result
+    switch (ret) {
+      case HTTP_UPDATE_FAILED:
+        Serial.printf("HTTP update failed: (%d): %s\n", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
+        
+        // Check for specific error codes
+        if (ESPhttpUpdate.getLastError() == 4) {
+          Serial.println("Not Enough Space error detected. The firmware binary is too large.");
+          updateFirmwareStatusWithError("Not Enough Space", newVersion);
+        } else {
+          updateFirmwareStatusWithError("Update Failed: " + String(ESPhttpUpdate.getLastErrorString()), newVersion);
+        }
+        
+        updateInProgress = false;
+        break;
+        
+      case HTTP_UPDATE_NO_UPDATES:
+        Serial.println("No updates available");
+        updateInProgress = false;
+        updateFirmwareStatus("up_to_date", "");
+        break;
+        
+      case HTTP_UPDATE_OK:
+        Serial.println("Update successful! Rebooting...");
+        // The device will reboot automatically after a successful update
+        break;
+    }
+  }
 }
 
 void sendStatusUpdate() {
@@ -504,8 +1061,12 @@ void sendStatusUpdate() {
   content.set("fields/ipAddress/stringValue", WiFi.localIP().toString());
   content.set("fields/lastActive/integerValue", String(currentTime));
   
+  // Add firmware information to the update
+  content.set("fields/firmware/mapValue/fields/currentVersion/stringValue", FIRMWARE_VERSION);
+  content.set("fields/firmware/mapValue/fields/autoUpdateEnabled/booleanValue", autoUpdateEnabled);
+  
   // Define the update mask for the fields we want to update
-  String updateMask = "state,status,ipAddress,lastActive";
+  String updateMask = "state,status,ipAddress,lastActive,firmware.currentVersion,firmware.autoUpdateEnabled";
   
   if (Firebase.Firestore.patchDocument(&fbdo, PROJECT_ID, "", documentPath, content.raw(), updateMask)) {
     Serial.println("Status update sent successfully to Firestore");
