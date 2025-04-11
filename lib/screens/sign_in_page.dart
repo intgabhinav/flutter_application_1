@@ -3,7 +3,7 @@ import 'package:flutter_application_1/services/auth_service.dart';
 import 'package:flutter_application_1/shared/loading.dart';
 
 class SignInPage extends StatefulWidget {
-  const SignInPage({Key? key}) : super(key: key);
+  const SignInPage({super.key});
 
   @override
   State<SignInPage> createState() => _SignInPageState();

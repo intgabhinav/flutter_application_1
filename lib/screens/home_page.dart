@@ -282,7 +282,7 @@ class _HomePageState extends State<HomePage> {
           if (_userModel == null || !_userModel!.hasDevices)
             _buildNoDevicesMessage()
           else
-            ..._userModel!.devices.map(_buildDeviceItem).toList(),
+            ..._userModel!.devices.map(_buildDeviceItem),
         ]),
       ),
     );
@@ -370,7 +370,7 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 10),
               // Device ID
               Text(
-                'Device ID: ${device.id.length > 8 ? device.id.substring(0, 8) + '...' : device.id}',
+                'Device ID: ${device.id.length > 8 ? '${device.id.substring(0, 8)}...' : device.id}',
                 style: const TextStyle(fontSize: 14, color: Colors.grey)
               ),
               const SizedBox(height: 8),

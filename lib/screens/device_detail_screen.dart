@@ -145,7 +145,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                                 const SizedBox(height: 8),
                                 ..._latestData!.sensorData.entries.map((entry) => 
                                   _buildSensorValueRow(entry.key, entry.value.toString())
-                                ).toList(),
+                                ),
                                 if (_latestData!.sensorData.isEmpty)
                                   const Text(
                                     'No sensor data available',
@@ -188,7 +188,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                           ),
                         )
                       else
-                        ..._dataHistory.map((data) => _buildDataHistoryItem(data)).toList(),
+                        ..._dataHistory.map((data) => _buildDataHistoryItem(data)),
                     ],
                   ),
                 ),
@@ -437,7 +437,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                 const SizedBox(height: 8),
                 ...data.sensorData.entries.map((entry) =>
                   _buildSensorValueRow(entry.key, entry.value.toString())
-                ).toList(),
+                ),
                 if (data.sensorData.isEmpty)
                   const Text(
                     'No sensor data available',

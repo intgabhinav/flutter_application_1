@@ -13,16 +13,15 @@
 #include <ESP8266httpUpdate.h>  // For HTTP-based OTA updates
 
 // Constants
-#define FIRMWARE_VERSION "1.0.8"  // Current firmware version
+#define FIRMWARE_VERSION "1.0.1"  // Current firmware version
 #define SWITCH_PIN 5
-#define LED_PIN 2  // Onboard LED on ESP8266
 #define CONFIG_MODE_TIMEOUT 300000  // 5 minutes in milliseconds
 #define EEPROM_SIZE 512
 #define EEPROM_WIFI_SSID_ADDR 0
 #define EEPROM_WIFI_PASS_ADDR 32
 #define EEPROM_API_KEY_ADDR 96
-#define EEPROM_DEVICE_NAME_ADDR 160  // Re-enable device name storage
-// Device ID no longer stored in EEPROM
+#define EEPROM_DEVICE_NAME_ADDR 160
+#define EEPROM_DEVICE_ID_ADDR 224  // Store device ID
 #define EEPROM_CONFIG_FLAG_ADDR 288  // Flag to indicate if device is configured
 #define EEPROM_UPDATE_FLAG_ADDR 289  // Flag to indicate if device just completed an update
 
@@ -37,7 +36,6 @@ void sendStatusUpdate();
 void updateFirmwareStatus(String status, String availableVersion);
 void updateFirmwareStatusWithTimestamp(String status, String availableVersion);
 void updateFirmwareStatusWithError(String errorMsg, String availableVersion);
-void checkDeviceNameInFirebase();  // New function to check for name changes
 
 // Variables
 bool isConfigured = false;
@@ -76,13 +74,9 @@ unsigned long lastAutoUpdateCheck = 0;
 bool updateInProgress = false;       // Flag to prevent multiple update attempts
 bool justUpdated = false;           // Flag to indicate device just completed an update
 
-// LED blinking variables
-unsigned long lastLedToggleTime = 0;
-bool ledState = HIGH;               // LED is active LOW on ESP8266
-
 // EEPROM backup area - used to preserve settings during OTA updates
 #define EEPROM_BACKUP_ADDR 350
-#define EEPROM_BACKUP_SIZE 128  // Enough to store WiFi credentials and device name
+#define EEPROM_BACKUP_SIZE 128  // Enough to store WiFi credentials and device info
 
 // Function to backup important EEPROM data before OTA update
 void backupEEPROMSettings() {
@@ -122,10 +116,6 @@ void setup() {
   Serial.begin(115200);
   pinMode(SWITCH_PIN, OUTPUT);
   digitalWrite(SWITCH_PIN, LOW);  // Initialize switch to OFF
-  
-  // Initialize LED pin
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, HIGH);    // Turn LED off initially (active LOW)
   
   // Initialize EEPROM
   EEPROM.begin(EEPROM_SIZE);
@@ -218,16 +208,6 @@ void loop() {
   dnsServer.processNextRequest();
   webServer.handleClient();
   
-  // Fast blinking LED in setup mode (100ms on, 100ms off)
-  unsigned long currentMillis = millis();
-  static unsigned long previousLedMillis = 0;
-  
-  if (currentMillis - previousLedMillis >= 100) {
-    previousLedMillis = currentMillis;
-    ledState = !ledState;
-    digitalWrite(LED_PIN, ledState ? HIGH : LOW);
-  }
-  
   // Check if setup mode has timed out
   if (millis() - setupModeStartTime > CONFIG_MODE_TIMEOUT) {
     Serial.println("Setup mode timed out, restarting device");
@@ -266,8 +246,13 @@ void setupMode() {
   
   Serial.println("Setup mode active. Connect to WiFi: " + apName);
   
-  // Start fast blinking LED to indicate setup mode
-  // This will be handled in the loop function
+  // Blink LED to indicate setup mode
+  for (int i = 0; i < 5; i++) {
+    digitalWrite(SWITCH_PIN, HIGH);
+    delay(100);
+    digitalWrite(SWITCH_PIN, LOW);
+    delay(100);
+  }
 }
 
 void handleCID() {
@@ -312,8 +297,9 @@ void handleRoot() {
   html += "<label for='password'>WiFi Password:</label><br>";
   html += "<input type='password' id='password' name='password' required><br>";
   html += "<label for='deviceName'>Device Name (optional):</label><br>";
-  html += "<input type='text' id='deviceName' name='deviceName' placeholder='Terrace Switch'><br>";
-  html += "<p>Device ID: " + String(ESP.getChipId()) + " (automatically generated)</p>";
+  html += "<input type='text' id='deviceName' name='deviceName' placeholder='Kitchen Switch'><br>";
+  html += "<label for='deviceId'>Device ID:</label><br>";
+  html += "<input type='text' id='deviceId' name='deviceId' value='" + String(ESP.getChipId()) + "' readonly><br>";
   html += "<button type='submit'>Configure Device</button>";
   html += "</form>";
   html += "<p>Firmware Version: " + String(FIRMWARE_VERSION) + "</p>";
@@ -332,25 +318,22 @@ void handleConfigure() {
   String ssid = webServer.arg("ssid");
   String password = webServer.arg("password");
   String name = webServer.arg("deviceName");
+  String id = webServer.arg("deviceId");
   
-  if (ssid.length() == 0 || password.length() == 0) {
+  if (ssid.length() == 0 || password.length() == 0 || id.length() == 0) {
     webServer.send(400, "text/plain", "Missing required fields");
     return;
   }
   
-  // Store WiFi credentials
+  // Store WiFi credentials and device info
   ssid.toCharArray(wifiSSID, sizeof(wifiSSID));
   password.toCharArray(wifiPassword, sizeof(wifiPassword));
+  id.toCharArray(deviceId, sizeof(deviceId));
   
-  // Generate device ID from chip ID (not stored in EEPROM)
-  String chipIdStr = String(ESP.getChipId());
-  chipIdStr.toCharArray(deviceId, sizeof(deviceId));
-  
-  // Handle device name (not stored in EEPROM)
   if (name.length() > 0) {
     name.toCharArray(deviceName, sizeof(deviceName));
   } else {
-    String defaultName = "Switch_" + chipIdStr;
+    String defaultName = "Switch_" + id;
     defaultName.toCharArray(deviceName, sizeof(deviceName));
   }
   
@@ -418,13 +401,15 @@ void saveConfigToEEPROM() {
     EEPROM.write(EEPROM_WIFI_PASS_ADDR + i, wifiPassword[i]);
   }
   
-  // Save device name to EEPROM
+  // Save device ID
+  for (int i = 0; i < sizeof(deviceId); i++) {
+    EEPROM.write(EEPROM_DEVICE_ID_ADDR + i, deviceId[i]);
+  }
+  
+  // Save device name
   for (int i = 0; i < sizeof(deviceName); i++) {
     EEPROM.write(EEPROM_DEVICE_NAME_ADDR + i, deviceName[i]);
   }
-  
-  // Device ID is not saved to EEPROM
-  // It will be generated dynamically when needed
   
   EEPROM.commit();
   Serial.println("Configuration saved to EEPROM");
@@ -440,25 +425,14 @@ void readConfigFromEEPROM() {
     wifiPassword[i] = EEPROM.read(EEPROM_WIFI_PASS_ADDR + i);
   }
   
-  // Generate device ID from chip ID
-  String chipIdStr = String(ESP.getChipId());
-  chipIdStr.toCharArray(deviceId, sizeof(deviceId));
-  
-  // Read device name from EEPROM
-  bool hasStoredName = false;
-  for (int i = 0; i < sizeof(deviceName); i++) {
-    deviceName[i] = EEPROM.read(EEPROM_DEVICE_NAME_ADDR + i);
-    // Check if we have a valid stored name (first byte not 0 or 255)
-    if (i == 0 && deviceName[0] != 0 && deviceName[0] != 255) {
-      hasStoredName = true;
-    }
+  // Read device ID
+  for (int i = 0; i < sizeof(deviceId); i++) {
+    deviceId[i] = EEPROM.read(EEPROM_DEVICE_ID_ADDR + i);
   }
   
-  // If no valid name in EEPROM, generate default name
-  if (!hasStoredName) {
-    String defaultName = "Switch_" + chipIdStr;
-    defaultName.toCharArray(deviceName, sizeof(deviceName));
-    Serial.println("No valid name in EEPROM, using default name");
+  // Read device name
+  for (int i = 0; i < sizeof(deviceName); i++) {
+    deviceName[i] = EEPROM.read(EEPROM_DEVICE_NAME_ADDR + i);
   }
   
   Serial.println("Configuration loaded from EEPROM");
@@ -466,7 +440,7 @@ void readConfigFromEEPROM() {
   Serial.println(wifiSSID);
   Serial.print("Device Name: ");
   Serial.println(deviceName);
-  Serial.print("Device ID (from chip): ");
+  Serial.print("Device ID: ");
   Serial.println(deviceId);
 }
 
@@ -520,20 +494,8 @@ void normalOperationMode() {
       MDNS.update();
     }
     
-    // Get current time
-    unsigned long currentMillis = millis();
-    
-    // Blink the onboard LED according to the specified pattern
-    // LED ON for 1 second, OFF for 2 seconds
-    if (currentMillis - lastLedToggleTime >= (ledState == LOW ? 1000 : 2000)) {
-      lastLedToggleTime = currentMillis;
-      ledState = (ledState == LOW) ? HIGH : LOW;
-      digitalWrite(LED_PIN, ledState);
-      Serial.print("LED: ");
-      Serial.println(ledState == LOW ? "ON" : "OFF");
-    }
-    
     // Check for device state changes in Firebase
+    unsigned long currentMillis = millis();
     if (currentMillis - lastStateCheckTime >= STATE_CHECK_INTERVAL) {
       lastStateCheckTime = currentMillis;
       checkDeviceState();
@@ -550,13 +512,6 @@ void normalOperationMode() {
     if (currentMillis - lastAutoUpdateCheck >= AUTO_UPDATE_CHECK_INTERVAL) {
       lastAutoUpdateCheck = currentMillis;
       checkForFirmwareUpdates();
-    }
-    
-    // Check for device name changes in Firebase (every 5 minutes)
-    static unsigned long lastNameCheckTime = 0;
-    if (currentMillis - lastNameCheckTime >= 300000) { // 5 minutes
-      lastNameCheckTime = currentMillis;
-      checkDeviceNameInFirebase();
     }
     
     // Allow the ESP to handle other tasks
@@ -1080,66 +1035,6 @@ void performAutomaticUpdate(String firmwareUrl, String newVersion, String expect
         // The device will reboot automatically after a successful update
         break;
     }
-  }
-}
-
-void checkDeviceNameInFirebase() {
-  Serial.println("Checking for device name changes in Firestore...");
-  
-  // Check if Firebase is ready
-  if (!Firebase.ready()) {
-    Serial.println("Firebase is not ready, skipping name check");
-    return;
-  }
-  
-  // Document path in Firestore
-  String documentPath = "devices/" + String(deviceId);
-  
-  // Get the document from Firestore
-  if (Firebase.Firestore.getDocument(&fbdo, PROJECT_ID, "", documentPath, "name")) {
-    Serial.println("Got document name field from Firestore");
-    
-    // Parse the JSON response
-    FirebaseJson payload;
-    payload.setJsonData(fbdo.payload().c_str());
-    
-    // Extract the name field
-    FirebaseJsonData result;
-    payload.get(result, "fields/name/stringValue");
-    
-    if (result.success) {
-      String firebaseName = result.stringValue;
-      String currentName = String(deviceName);
-      
-      Serial.print("Firebase name: ");
-      Serial.println(firebaseName);
-      Serial.print("Current local name: ");
-      Serial.println(currentName);
-      
-      // If names are different, update local name
-      if (firebaseName != currentName) {
-        Serial.println("Device name changed in Firebase, updating local name");
-        
-        // Update local name
-        firebaseName.toCharArray(deviceName, sizeof(deviceName));
-        
-        // Save to EEPROM
-        for (int i = 0; i < sizeof(deviceName); i++) {
-          EEPROM.write(EEPROM_DEVICE_NAME_ADDR + i, deviceName[i]);
-        }
-        EEPROM.commit();
-        
-        Serial.print("Local name updated to: ");
-        Serial.println(deviceName);
-      } else {
-        Serial.println("Device name unchanged");
-      }
-    } else {
-      Serial.println("Name field not found in document");
-    }
-  } else {
-    Serial.print("Failed to get document from Firestore: ");
-    Serial.println(fbdo.errorReason());
   }
 }
 

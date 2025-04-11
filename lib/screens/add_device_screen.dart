@@ -4,10 +4,7 @@ import 'package:flutter_application_1/services/database_service.dart';
 import 'package:flutter_application_1/shared/loading.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
-import 'dart:io' show Platform;
-import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:http/http.dart' as http;
-import 'dart:convert';
 import 'dart:async';
 import 'dart:math' show min;
 

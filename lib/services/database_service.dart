@@ -111,7 +111,7 @@ class DatabaseService {
       print('Device status updated to $newStatus for device: $deviceId');
     } catch (e) {
       print('Error updating device status: $e');
-      throw e; // Re-throw to handle in the UI
+      rethrow; // Re-throw to handle in the UI
     }
   }
   
@@ -141,7 +141,7 @@ class DatabaseService {
       print('Verified state after update: ${data['state']}');
     } catch (e) {
       print('Error updating device state: $e');
-      throw e; // Re-throw to handle in the UI
+      rethrow; // Re-throw to handle in the UI
     }
   }
 
@@ -171,7 +171,7 @@ class DatabaseService {
       print('Device deleted successfully: $deviceId');
     } catch (e) {
       print('Error deleting device: $e');
-      throw e; // Re-throw to handle in the UI
+      rethrow; // Re-throw to handle in the UI
     }
   }
 

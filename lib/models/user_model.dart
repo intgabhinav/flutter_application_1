@@ -133,12 +133,12 @@ class UserModel {
     List<DeviceModel>? devices,
   }) {
     return UserModel(
-      uid: this.uid,
-      email: this.email,
+      uid: uid,
+      email: email,
       displayName: displayName ?? this.displayName,
       photoURL: photoURL ?? this.photoURL,
-      createdAt: this.createdAt,
-      lastLogin: this.lastLogin,
+      createdAt: createdAt,
+      lastLogin: lastLogin,
       preferences: preferences ?? this.preferences,
       devices: devices ?? this.devices,
     );
