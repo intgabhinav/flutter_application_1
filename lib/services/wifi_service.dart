@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:http/http.dart' as http;
 
 /// A service to handle WiFi connection functionality
 class WiFiService {
@@ -124,6 +125,30 @@ class WiFiService {
   }
   
   // We no longer need the openCaptivePortal method as we're using WebView instead
+  
+  /// Check if connected to the device's WiFi by making a request to the device's IP
+  /// Returns true if the device is reachable, false otherwise
+  Future<bool> isConnectedToDeviceWifi() async {
+    // First check if connected to any WiFi
+    final isConnected = await isConnectedToWifi();
+    if (!isConnected) {
+      return false;
+    }
+    
+    // Try to reach the device at its IP address
+    try {
+      // Set a short timeout to avoid hanging the UI
+      final response = await http.get(
+        Uri.parse('http://192.168.1.6/'),
+      ).timeout(const Duration(seconds: 3));
+      
+      // If we get any response, consider it a success
+      return response.statusCode >= 200 && response.statusCode < 400;
+    } catch (e) {
+      // If there's an error (timeout, connection refused, etc.), the device is not reachable
+      return false;
+    }
+  }
 }
 
 // Simplified NetworkSecurity enum for compatibility
