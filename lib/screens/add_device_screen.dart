@@ -2,12 +2,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_application_1/shared/loading.dart';
 import 'package:provider/provider.dart';
+import 'package:http/http.dart' as http;
 
-// Import our services
 import 'package:flutter_application_1/services/wifi_service.dart';
-
-// Import screens
-import 'package:flutter_application_1/screens/device_webview_screen.dart';
+import 'package:flutter_application_1/screens/device_inappwebview_screen.dart';
 
 class AddDeviceScreen extends StatefulWidget {
   const AddDeviceScreen({super.key});
@@ -17,72 +15,82 @@ class AddDeviceScreen extends StatefulWidget {
 }
 
 class _AddDeviceScreenState extends State<AddDeviceScreen> with WidgetsBindingObserver {
-  // Track the current step in the device registration flow
   int _currentStep = 0;
-
-  // Steps in the registration flow
   static const int STEP_POWER_DEVICE = 0;
   static const int STEP_SEARCHING = 1;
 
   bool _isLoading = false;
   String? _errorMessage;
   bool _isScanning = false;
-  
-  // WiFi service instance
-  final WiFiService _wifiService = WiFiService();
-  
-  // Device WiFi SSID
-  static const String DEVICE_SSID = "Skynet-AutoConnect";
-  
-  // Track WiFi connection status
   bool _isWifiConnected = false;
-  
-  // Track if connected to device WiFi specifically
   bool _isConnectedToDeviceWifi = false;
-  
+
+  final WiFiService _wifiService = WiFiService();
+  static const String DEVICE_SSID = "Skynet-AutoConnect";
+  static const String DEVICE_IP = 'http://192.168.1.6';
+
   @override
   void initState() {
     super.initState();
-    // Register observer for app lifecycle changes
     WidgetsBinding.instance.addObserver(this);
-    // Check WiFi status when screen initializes
     _checkWifiStatus();
   }
-  
+
   @override
   void dispose() {
-    // Unregister observer when screen is disposed
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
-  
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // When app resumes from background, check WiFi status
     if (state == AppLifecycleState.resumed) {
       _checkWifiStatus();
     }
   }
-  
-  // Check if connected to WiFi and device WiFi
+
   Future<void> _checkWifiStatus() async {
     final isConnected = await _wifiService.isConnectedToWifi();
-    bool isConnectedToDevice = false;
-    
-    if (isConnected) {
-      // Only check device WiFi if connected to any WiFi
-      isConnectedToDevice = await _wifiService.isConnectedToDeviceWifi();
-    }
-    
+    final isConnectedToDevice = isConnected && await _wifiService.isConnectedToDeviceWifi();
+
     if (mounted) {
       setState(() {
         _isWifiConnected = isConnected;
         _isConnectedToDeviceWifi = isConnectedToDevice;
-        
-        // If connected to device WiFi, clear any error messages
-        if (isConnectedToDevice) {
-          _errorMessage = null;
-        }
+        if (isConnectedToDevice) _errorMessage = null;
+      });
+    }
+  }
+
+  Future<void> _handleOpenDeviceSetup(User? user) async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final response = await http.get(Uri.parse('$DEVICE_IP/'));
+
+      if (response.statusCode == 200 && mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => const DeviceInAppWebViewScreen(deviceUrl: '$DEVICE_IP/'),
+          ),
+        );
+      } else {
+        _setError('Device responded with status ${response.statusCode}');
+      }
+    } catch (e) {
+      _setError('Failed to connect to device: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  void _setError(String message) {
+    if (mounted) {
+      setState(() {
+        _errorMessage = message;
       });
     }
   }
@@ -97,24 +105,16 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> with WidgetsBindingOb
         title: const Text('Add New Device'),
         backgroundColor: theme.colorScheme.primary,
       ),
-      body: _isLoading
-          ? const Loading()
-          : _buildCurrentStep(user, theme),
+      body: _isLoading ? const Loading() : _buildCurrentStep(user, theme),
     );
   }
 
   Widget _buildCurrentStep(User? user, ThemeData theme) {
-    switch (_currentStep) {
-      case STEP_POWER_DEVICE:
-        return _buildPowerDeviceStep(theme);
-      case STEP_SEARCHING:
-        return _buildSearchingStep(theme);
-      default:
-        return _buildPowerDeviceStep(theme);
-    }
+    return _currentStep == STEP_POWER_DEVICE
+        ? _buildPowerDeviceStep(theme)
+        : _buildSearchingStep(user, theme);
   }
 
-  // Step 1: Power up device instructions
   Widget _buildPowerDeviceStep(ThemeData theme) {
     return Padding(
       padding: const EdgeInsets.all(24.0),
@@ -122,26 +122,11 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> with WidgetsBindingOb
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Icon(
-            Icons.power_settings_new,
-            size: 80,
-            color: Colors.blue,
-          ),
+          const Icon(Icons.power_settings_new, size: 80, color: Colors.blue),
           const SizedBox(height: 32),
-          const Text(
-            'Power Up Your Device',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-            ),
-            textAlign: TextAlign.center,
-          ),
+          const Text('Power Up Your Device', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
           const SizedBox(height: 24),
-          const Text(
-            'Make sure your device is powered up and blinking before continuing.',
-            style: TextStyle(fontSize: 16),
-            textAlign: TextAlign.center,
-          ),
+          const Text('Make sure your device is powered up and blinking before continuing.', style: TextStyle(fontSize: 16), textAlign: TextAlign.center),
           const SizedBox(height: 16),
           const Card(
             elevation: 4,
@@ -151,21 +136,10 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> with WidgetsBindingOb
                 children: [
                   Icon(Icons.info_outline, color: Colors.blue),
                   SizedBox(height: 10),
-                  Text(
-                    'Setup Instructions',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  Text('Setup Instructions', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   SizedBox(height: 10),
-                  Text(
-                    '1. Plug in your device to a power source\n'
-                    '2. Wait for the LED to start blinking blue\n'
-                    '3. Press the Next button below to continue',
-                    style: TextStyle(fontSize: 14),
-                    textAlign: TextAlign.left,
-                  ),
+                  Text('1. Plug in your device to a power source\n2. Wait for the LED to start blinking blue\n3. Press the Next button below to continue',
+                    style: TextStyle(fontSize: 14), textAlign: TextAlign.left),
                 ],
               ),
             ),
@@ -176,52 +150,27 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> with WidgetsBindingOb
               backgroundColor: theme.colorScheme.primary,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
-            onPressed: () {
-              // Move to the WiFi connection step
-              setState(() {
-                _currentStep = STEP_SEARCHING;
-                _errorMessage = null;
-              });
-            },
-            child: const Text(
-              'Next',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+            onPressed: () => setState(() => _currentStep = STEP_SEARCHING),
+            child: const Text('Next', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
     );
   }
 
-  // Step 2: Connect to device WiFi and scan for devices
-  Widget _buildSearchingStep(ThemeData theme) {
+  Widget _buildSearchingStep(User? user, ThemeData theme) {
     return Padding(
       padding: const EdgeInsets.all(24.0),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(
-            _isScanning ? Icons.search : Icons.wifi,
-            size: 80,
-            color: _isScanning ? Colors.green : Colors.blue,
-          ),
+          Icon(_isScanning ? Icons.search : Icons.wifi, size: 80, color: _isScanning ? Colors.green : Colors.blue),
           const SizedBox(height: 32),
-          Text(
-            _isScanning ? 'Scanning for Devices...' : 'Connect to Device WiFi',
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-            ),
-            textAlign: TextAlign.center,
-          ),
+          Text(_isScanning ? 'Scanning for Devices...' : 'Connect to Device WiFi',
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
           if (_errorMessage != null)
             Padding(
               padding: const EdgeInsets.only(top: 16.0),
@@ -232,297 +181,136 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> with WidgetsBindingOb
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: Colors.red.shade200),
                 ),
-                child: Text(
-                  _errorMessage!,
-                  style: TextStyle(color: Colors.red.shade800),
-                  textAlign: TextAlign.center,
-                ),
+                child: Text(_errorMessage!, style: TextStyle(color: Colors.red.shade800), textAlign: TextAlign.center),
               ),
             ),
           const SizedBox(height: 24),
-          
-          if (_isLoading)
-            Column(
-              children: [
-                const CircularProgressIndicator(),
-                const SizedBox(height: 24),
-                Text(
-                  _isScanning ? 'Scanning for devices...' : 'Opening WiFi settings...',
-                  style: const TextStyle(fontSize: 16),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            )
-          else if (_isScanning)
-            // Show scanning animation and feedback
-            Column(
-              children: [
-                const SizedBox(
-                  height: 100,
-                  width: 100,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 8,
-                    valueColor: AlwaysStoppedAnimation<Color>(Colors.green),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                const Text(
-                  'Looking for ESP devices...',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'This may take a few moments',
-                  style: TextStyle(fontSize: 14),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            )
-          else
-            // Show WiFi connection instructions
-            Column(
-              children: [
-                Card(
-                  elevation: 4,
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      children: [
-                        Column(
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.wifi,
-                                  color: _isWifiConnected ? Colors.green : Colors.grey,
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  DEVICE_SSID,
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                    color: theme.colorScheme.primary,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            // WiFi status row removed as requested
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        const Text(
-                          'Steps to connect:',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '1. Tap "Open WiFi Settings" below\n'
-                          '2. Connect to "$DEVICE_SSID" network\n'
-                          '3. Return to this app and tap "Scan Device" below',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            color: Colors.black87,
-                          ),
-                          textAlign: TextAlign.left,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: _isConnectedToDeviceWifi ? Colors.green.shade50 : Colors.amber.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: _isConnectedToDeviceWifi ? Colors.green.shade200 : Colors.amber.shade200
-                    ),
-                  ),
-                  child: _isConnectedToDeviceWifi 
-                    ? Column(
-                      children: [
-                        Row(
-                          children: [
-                            Icon(Icons.check_circle, color: Colors.green),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                'You are connected to the device WiFi network!\nTap "Open Device Setup" below to continue.',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.green.shade700
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    )
-                    : Column(
-                      children: [
-                        Row(
-                          children: [
-                            Icon(Icons.info_outline, color: Colors.amber),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                'You must connect to the device\'s WiFi network before opening device setup',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.amber.shade800
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        ElevatedButton.icon(
-                          icon: Icon(_isConnectedToDeviceWifi ? Icons.check_circle : Icons.settings),
-                          label: Text(_isConnectedToDeviceWifi ? 'Connected to Device WiFi' : 'Open WiFi Settings'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _isConnectedToDeviceWifi ? Colors.green : Colors.blue,
-                            foregroundColor: Colors.white,
-                          ),
-                          onPressed: _isConnectedToDeviceWifi ? null : () async {
-                            setState(() {
-                              _isLoading = true;
-                              _errorMessage = null;
-                            });
-                            
-                            try {
-                              // Use the WiFi service to open WiFi settings
-                              final success = await _wifiService.connectToWifi(context, DEVICE_SSID);
-                              
-                              if (!success && mounted) {
-                                setState(() {
-                                  _errorMessage = "Could not open WiFi settings. Please open them manually.";
-                                });
-                              } else {
-                                // Check WiFi status after a delay to see if user connected
-                                // Check multiple times with increasing delays to give user time to connect
-                                Future.delayed(const Duration(seconds: 5), () {
-                                  _checkWifiStatus();
-                                  
-                                  // Check again after another delay
-                                  Future.delayed(const Duration(seconds: 5), () {
-                                    _checkWifiStatus();
-                                    
-                                    // And one more time after another delay
-                                    Future.delayed(const Duration(seconds: 5), () {
-                                      _checkWifiStatus();
-                                    });
-                                  });
-                                });
-                              }
-                            } catch (e) {
-                              if (mounted) {
-                                setState(() {
-                                  _errorMessage = "Error: ${e.toString()}";
-                                });
-                              }
-                            } finally {
-                              if (mounted) {
-                                setState(() {
-                                  _isLoading = false;
-                                });
-                              }
-                            }
-                          },
-                        ),
-                      ],
-                    ),
-                ),
-                const SizedBox(height: 24),
-                const Text(
-                  'Once connected, we\'ll scan for available ESP devices.',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontStyle: FontStyle.italic,
-                    color: Colors.grey,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
+          _buildConnectionCard(theme),
           const Spacer(),
-
-          // Only show the "Open Device Setup" button when connected to device WiFi
           if (!_isLoading && !_isScanning && _isConnectedToDeviceWifi)
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                elevation: 4,
-              ),
-              onPressed: () {
-                // Navigate to the WebView screen with the device's URL
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (context) => const DeviceWebViewScreen(
-                      deviceUrl: 'http://192.168.1.6/',
-                    ),
-                  ),
-                );
-              },
-              child: const Text(
-                'Open Device Setup',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
+            _buildActionButton('Open Device Setup', Colors.green, () => _handleOpenDeviceSetup(user)),
           if (_isScanning)
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              onPressed: () {
-                // Stop scanning
-                setState(() {
-                  _isScanning = false;
-                });
-              },
-              child: const Text(
-                'Stop Scanning',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
+            _buildActionButton('Stop Scanning', Colors.red, () => setState(() => _isScanning = false)),
           if (!_isLoading)
             Padding(
               padding: const EdgeInsets.only(top: 16.0),
               child: TextButton(
-                onPressed: () {
-                  setState(() {
-                    _currentStep = STEP_POWER_DEVICE;
-                    _isScanning = false;
-                  });
-                },
+                onPressed: () => setState(() => _currentStep = STEP_POWER_DEVICE),
                 child: const Text('Back'),
               ),
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildConnectionCard(ThemeData theme) {
+    return Column(
+      children: [
+        Card(
+          elevation: 4,
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.wifi, color: _isWifiConnected ? Colors.green : Colors.grey),
+                    const SizedBox(width: 8),
+                    Text(DEVICE_SSID, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: theme.colorScheme.primary)),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                const Text('Steps to connect:', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                const Text('1. Tap "Open WiFi Settings" below\n2. Connect to "$DEVICE_SSID" network\n3. Return to this app and tap "Scan Device" below',
+                  style: TextStyle(fontSize: 14, color: Colors.black87), textAlign: TextAlign.left),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: _isConnectedToDeviceWifi ? Colors.green.shade50 : Colors.amber.shade50,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: _isConnectedToDeviceWifi ? Colors.green.shade200 : Colors.amber.shade200),
+          ),
+          child: _isConnectedToDeviceWifi
+              ? _buildConnectedNotice()
+              : _buildWifiInstructionsButton(),
+        ),
+        const SizedBox(height: 24),
+        const Text('Once connected, we\'ll scan for available ESP devices.',
+            style: TextStyle(fontSize: 14, fontStyle: FontStyle.italic, color: Colors.grey), textAlign: TextAlign.center),
+      ],
+    );
+  }
+
+  Widget _buildConnectedNotice() {
+    return Row(
+      children: [
+        const Icon(Icons.check_circle, color: Colors.green),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text('You are connected to the device WiFi network!\nTap "Open Device Setup" below to continue.',
+              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green.shade700)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWifiInstructionsButton() {
+    return Column(
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.info_outline, color: Colors.amber),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text('You must connect to the device\'s WiFi network before opening device setup',
+                  style: TextStyle(fontWeight: FontWeight.bold, color: Colors.amber.shade800)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        ElevatedButton.icon(
+          icon: Icon(_isConnectedToDeviceWifi ? Icons.check_circle : Icons.settings),
+          label: Text(_isConnectedToDeviceWifi ? 'Connected to Device WiFi' : 'Open WiFi Settings'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: _isConnectedToDeviceWifi ? Colors.green : Colors.blue,
+            foregroundColor: Colors.white,
+          ),
+          onPressed: _isConnectedToDeviceWifi ? null : () async {
+            setState(() => _isLoading = true);
+            try {
+              final success = await _wifiService.connectToWifi(context, DEVICE_SSID);
+              if (!success && mounted) _setError("Could not open WiFi settings. Please open them manually.");
+              await Future.delayed(const Duration(seconds: 15), _checkWifiStatus);
+            } catch (e) {
+              _setError("Error: ${e.toString()}");
+            } finally {
+              if (mounted) setState(() => _isLoading = false);
+            }
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildActionButton(String text, Color color, VoidCallback onPressed) {
+    return ElevatedButton(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: color,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        elevation: 4,
+      ),
+      onPressed: onPressed,
+      child: Text(text, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
     );
   }
 }
