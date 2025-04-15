@@ -27,7 +27,7 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> with WidgetsBindingOb
 
   final WiFiService _wifiService = WiFiService();
   static const String DEVICE_SSID = "Skynet-AutoConnect";
-  static const String DEVICE_IP = 'http://192.168.1.6';
+  static const String DEVICE_IP = 'http://192.168.4.1';
 
   @override
   void initState() {
@@ -288,7 +288,7 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> with WidgetsBindingOb
             try {
               final success = await _wifiService.connectToWifi(context, DEVICE_SSID);
               if (!success && mounted) _setError("Could not open WiFi settings. Please open them manually.");
-              await Future.delayed(const Duration(seconds: 15), _checkWifiStatus);
+              await Future.delayed(const Duration(seconds: 5), _checkWifiStatus);
             } catch (e) {
               _setError("Error: ${e.toString()}");
             } finally {

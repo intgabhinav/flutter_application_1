@@ -139,7 +139,7 @@ class WiFiService {
     try {
       // Set a short timeout to avoid hanging the UI
       final response = await http.get(
-        Uri.parse('http://192.168.1.6/'),
+        Uri.parse('http://192.168.4.1/'),
       ).timeout(const Duration(seconds: 3));
       
       // If we get any response, consider it a success
