@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'success_screen.dart';
 
 class DeviceInAppWebViewScreen extends StatefulWidget {
   final String deviceUrl;
@@ -41,21 +42,4 @@ class _DeviceInAppWebViewScreenState extends State<DeviceInAppWebViewScreen> {
   }
 }
 
-class SuccessScreen extends StatelessWidget {
-  final String response;
-  const SuccessScreen({super.key, required this.response});
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Success')),
-      body: Center(
-        child: Text(
-          'Received from ESP:\n$response',
-          style: const TextStyle(fontSize: 24),
-          textAlign: TextAlign.center,
-        ),
-      ),
-    );
-  }
-}
