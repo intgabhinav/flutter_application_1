@@ -1,10 +1,10 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_application_1/models/user_model.dart';
-import 'package:flutter_application_1/screens/add_device_screen.dart';
-import 'package:flutter_application_1/screens/device_detail_screen.dart';
-import 'package:flutter_application_1/services/auth_service.dart';
-import 'package:flutter_application_1/services/database_service.dart';
+import 'package:garden_helper/models/user_model.dart';
+import 'package:garden_helper/screens/add_device_screen.dart';
+import 'package:garden_helper/screens/device_detail_screen.dart';
+import 'package:garden_helper/services/auth_service.dart';
+import 'package:garden_helper/services/database_service.dart';
 import 'package:provider/provider.dart';
 
 class HomePage extends StatefulWidget {

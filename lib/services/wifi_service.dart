@@ -8,7 +8,7 @@ import 'package:http/http.dart' as http;
 /// A service to handle WiFi connection functionality
 class WiFiService {
   static final WiFiService _instance = WiFiService._internal();
-  static const MethodChannel _channel = MethodChannel('com.example.flutter_application_1/wifi');
+  static const MethodChannel _channel = MethodChannel('com.example.garden_helper/wifi');
 
   factory WiFiService() {
     return _instance;

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_application_1/screens/sign_in_page.dart';
+import 'package:garden_helper/screens/sign_in_page.dart';
 
 class Authenticate extends StatelessWidget {
   const Authenticate({super.key});

@@ -1,11 +1,11 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_application_1/shared/loading.dart';
+import 'package:garden_helper/shared/loading.dart';
 import 'package:provider/provider.dart';
 import 'package:http/http.dart' as http;
 
-import 'package:flutter_application_1/services/wifi_service.dart';
-import 'package:flutter_application_1/screens/device_inappwebview_screen.dart';
+import 'package:garden_helper/services/wifi_service.dart';
+import 'package:garden_helper/screens/device_inappwebview_screen.dart';
 
 class AddDeviceScreen extends StatefulWidget {
   const AddDeviceScreen({super.key});

@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter_application_1/screens/home_page.dart';
-import 'package:flutter_application_1/services/auth_service.dart';
+import 'package:garden_helper/screens/home_page.dart';
+import 'package:garden_helper/services/auth_service.dart';
 
 void main() async {
   // Ensure Flutter is initialized
@@ -38,7 +38,7 @@ class MyApp extends StatelessWidget {
       ],
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
-        title: 'Flutter Demo',
+        title: 'Garden Helper',
         theme: ThemeData(
           useMaterial3: true,
           colorScheme: ColorScheme.fromSeed(
@@ -81,7 +81,7 @@ class SignInScreen extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const Text(
-              'Welcome to the Flutter Demo',
+              'Welcome to Garden Helper',
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               textAlign: TextAlign.center,
             ),

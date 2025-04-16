@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_application_1/services/auth_service.dart';
-import 'package:flutter_application_1/shared/loading.dart';
+import 'package:garden_helper/services/auth_service.dart';
+import 'package:garden_helper/shared/loading.dart';
 
 class SignInPage extends StatefulWidget {
   const SignInPage({super.key});
