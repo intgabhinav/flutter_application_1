@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'success_screen.dart';
+import 'device_registration_screen.dart';
 
 class DeviceInAppWebViewScreen extends StatefulWidget {
   final String deviceUrl;
@@ -25,7 +25,7 @@ class _DeviceInAppWebViewScreenState extends State<DeviceInAppWebViewScreen> {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => SuccessScreen(response: message.message),
+              builder: (context) => DeviceRegistrationScreen(response: message.message),
             ),
           );
         },

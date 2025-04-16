@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 
-class SuccessScreen extends StatelessWidget {
+class DeviceRegistrationScreen extends StatelessWidget {
   final String response;
 
-  const SuccessScreen({super.key, required this.response});
+  const DeviceRegistrationScreen({super.key, required this.response});
 
   @override
   Widget build(BuildContext context) {
@@ -18,7 +18,7 @@ class SuccessScreen extends StatelessWidget {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Saving WiFi')),
+      appBar: AppBar(title: const Text('Device Registration')),
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(24.0),
