@@ -1,5 +1,4 @@
 #include <ESP8266WiFi.h>
-#include <DNSServer.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266HTTPClient.h>
 #include <ArduinoJson.h>      // For JSON parsing
@@ -11,6 +10,22 @@
 #include <ESP8266HTTPUpdateServer.h> // For OTA updates via web interface
 #include <ESP8266mDNS.h>      // For OTA service discovery
 #include <ESP8266httpUpdate.h>  // For HTTP-based OTA updates
+
+// Function Declarations
+void readConfigFromEEPROM();
+bool connectToWiFi();
+void setupOTA();
+void normalOperationMode();
+void handleConfigure();
+void saveConfigToEEPROM();
+void checkDeviceState();
+void createInitialDocument();
+void updateSwitchState();
+void handleOTAPage();
+void checkForFirmwareUpdates();
+void performAutomaticUpdate(String url, String version, String md5);
+
+
 
 // Constants
 #define FIRMWARE_VERSION "1.0.8"  // Current firmware version
@@ -58,12 +73,11 @@ FirebaseJson content;
 
 // DNS Server for captive portal
 const byte DNS_PORT = 53;
-DNSServer dnsServer;
 
-// Web server for configuration portal
+// Web webServer for configuration portal
 ESP8266WebServer webServer(80);
 
-// OTA update server
+// OTA update webServer
 ESP8266HTTPUpdateServer httpUpdater;
 const char* OTA_USERNAME = "admin";  // Username for OTA updates
 const char* OTA_PASSWORD = "admin";  // Password for OTA updates
@@ -215,7 +229,7 @@ void setup() {
 
 void loop() {
   // This will only run if we're in setup mode
-  dnsServer.processNextRequest();
+  // dnsServer.processNextRequest();
   webServer.handleClient();
   
   // Fast blinking LED in setup mode (100ms on, 100ms off)
@@ -246,20 +260,19 @@ void setupMode() {
   WiFi.mode(WIFI_AP);
   WiFi.softAP(apName.c_str());
   
-  // Configure DNS server to redirect all requests to the ESP
+  // Configure DNS webServer to redirect all requests to the ESP
   IPAddress apIP = WiFi.softAPIP();
   Serial.print("AP IP address: ");
   Serial.println(apIP);
-  dnsServer.start(DNS_PORT, "*", apIP);
-  
-  // Setup web server
+  //   
+  // Setup web webServer
   webServer.on("/", handleRoot);
   webServer.on("/configure", handleConfigure);
   webServer.on("/cid", handleCID);
   webServer.on("/ota_setup", handleOTASetupPage);
   webServer.onNotFound(handleRoot);
   
-  // Setup OTA update server in setup mode too
+  // Setup OTA update webServer in setup mode too
   httpUpdater.setup(&webServer, "/update", OTA_USERNAME, OTA_PASSWORD);
   
   webServer.begin();
@@ -296,32 +309,45 @@ void handleRoot() {
   html += "<style>body{font-family:Arial;margin:0;padding:20px;text-align:center;}";
   html += "input,select{width:100%;padding:10px;margin:10px 0;box-sizing:border-box;}";
   html += "button{background-color:#4CAF50;color:white;padding:10px;border:none;cursor:pointer;width:100%;}";
-  html += "</style></head><body>";
+  html += "</style>";
+  html += "<script>";
+  html += "document.addEventListener('DOMContentLoaded', () => {";
+  html += "  document.getElementById('wifiForm').addEventListener('submit', function(e) {";
+  html += "    e.preventDefault();";
+  html += "    const ssid = document.getElementById('ssid').value;";
+  html += "    const pwd = document.getElementById('password').value;";
+  html += "    fetch('/configure', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ssid:ssid, password:pwd})})";
+  html += "      .then(response => response.text())";
+  html += "      .then(data => {";
+  html += "        if (window.ResponseChannel) ResponseChannel.postMessage(data);";
+  html += "        alert('Saved: Rebooting your Device');";
+  html += "      });";
+  html += "  });";
+  html += "});";
+  html += "</script></head><body>";
   html += "<h1>Switch Setup</h1>";
-  html += "<form action='/configure' method='post'>";
+  html += "<form id='wifiForm'>";
   html += "<label for='ssid'>WiFi Network:</label><br>";
   html += "<select id='ssid' name='ssid' required>";
-  
-  // Scan for networks
+
   int n = WiFi.scanNetworks();
   for (int i = 0; i < n; ++i) {
     html += "<option value='" + WiFi.SSID(i) + "'>" + WiFi.SSID(i) + " (" + WiFi.RSSI(i) + "dBm)</option>";
   }
-  
+
   html += "</select><br>";
   html += "<label for='password'>WiFi Password:</label><br>";
   html += "<input type='password' id='password' name='password' required><br>";
-  html += "<label for='deviceName'>Device Name (optional):</label><br>";
-  html += "<input type='text' id='deviceName' name='deviceName' placeholder='Terrace Switch'><br>";
-  html += "<p>Device ID: " + String(ESP.getChipId()) + " (automatically generated)</p>";
-  html += "<button type='submit'>Configure Device</button>";
+  html += "<p>Device ID: " + String(ESP.getChipId()) + "</p>";
+  html += "<button type='submit'>Connect</button>";
   html += "</form>";
   html += "<p>Firmware Version: " + String(FIRMWARE_VERSION) + "</p>";
   html += "<p><a href='/ota_setup'>Update Firmware</a></p>";
   html += "</body></html>";
-  
+
   webServer.send(200, "text/html", html);
 }
+
 
 void handleConfigure() {
   if (webServer.method() != HTTP_POST) {
@@ -329,9 +355,10 @@ void handleConfigure() {
     return;
   }
   
-  String ssid = webServer.arg("ssid");
-  String password = webServer.arg("password");
-  String name = webServer.arg("deviceName");
+  StaticJsonDocument<256> json;
+  deserializeJson(json, webServer.arg("plain"));
+  String ssid = json["ssid"];
+  String password = json["password"];
   
   if (ssid.length() == 0 || password.length() == 0) {
     webServer.send(400, "text/plain", "Missing required fields");
@@ -346,29 +373,14 @@ void handleConfigure() {
   String chipIdStr = String(ESP.getChipId());
   chipIdStr.toCharArray(deviceId, sizeof(deviceId));
   
-  // Handle device name (not stored in EEPROM)
-  if (name.length() > 0) {
-    name.toCharArray(deviceName, sizeof(deviceName));
-  } else {
-    String defaultName = "Switch_" + chipIdStr;
-    defaultName.toCharArray(deviceName, sizeof(deviceName));
-  }
-  
   // Send confirmation page
-  String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>";
-  html += "<style>body{font-family:Arial;margin:0;padding:20px;text-align:center;}";
-  html += ".loader{border:16px solid #f3f3f3;border-top:16px solid #3498db;border-radius:50%;width:120px;height:120px;";
-  html += "animation:spin 2s linear infinite;margin:0 auto;}";
-  html += "@keyframes spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}";
-  html += "</style>";
-  html += "<script>setTimeout(function(){document.getElementById('status').innerHTML='Device is connecting to your WiFi network.<br>You can now close this page and connect back to your regular WiFi network.';},3000);</script>";
-  html += "</head><body>";
-  html += "<h1>Device Configuration</h1>";
-  html += "<div class='loader'></div>";
-  html += "<p id='status'>Saving configuration...</p>";
-  html += "</body></html>";
-  
-  webServer.send(202, "text/html", html);
+  StaticJsonDocument<128> resDoc;
+  resDoc["status"] = "success";
+  resDoc["message"] = "Rebooting to connect...";
+  resDoc["chipID"] = chipIdStr ;
+  String response;
+  serializeJson(resDoc, response);
+  webServer.send(200, "application/json", response);
   
   // Wait a moment for the response to be sent
   delay(1000);
@@ -661,15 +673,15 @@ void setupOTA() {
     Serial.println("Error setting up mDNS responder!");
   }
   
-  // Set up HTTP OTA update server
+  // Set up HTTP OTA update webServer
   httpUpdater.setup(&webServer, "/update", OTA_USERNAME, OTA_PASSWORD);
   
   // Add route for OTA page
   webServer.on("/ota", HTTP_GET, handleOTAPage);
   
-  // Start web server for OTA updates
+  // Start web webServer for OTA updates
   webServer.begin();
-  Serial.println("HTTP OTA update server started");
+  Serial.println("HTTP OTA update webServer started");
   Serial.println("OTA URL: http://" + WiFi.localIP().toString() + "/update");
   
   otaEnabled = true;

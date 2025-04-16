@@ -299,4 +299,73 @@ class DatabaseService {
     // Return an empty list if no devices found or error occurs
     return [];
   }
+  
+  // Register a new device with the given chip ID and name
+  Future<bool> registerDevice(User user, String chipId, String deviceName) async {
+    try {
+      print('Registering new device: $chipId, $deviceName for user: ${user.uid}');
+      
+      // Check if the device already exists
+      DocumentSnapshot deviceDoc = await devicesCollection.doc(chipId).get();
+      if (deviceDoc.exists) {
+        print('Device already exists with ID: $chipId');
+        
+        // Check if it's already assigned to this user
+        Map<String, dynamic> deviceData = deviceDoc.data() as Map<String, dynamic>;
+        
+        // If the device is already assigned to this user, return success
+        if (deviceData['ownerId'] == user.uid) {
+          print('Device already registered to this user');
+          return true;
+        } 
+        // If the device has no owner (ownerId is empty or null), allow this user to claim it
+        else if (deviceData['ownerId'] == null || deviceData['ownerId'] == '') {
+          print('Device exists but has no owner, claiming it for this user');
+          
+          // Update the device with the new owner
+          await devicesCollection.doc(chipId).update({
+            'ownerId': user.uid,
+            'name': deviceName,
+            'lastActive': FieldValue.serverTimestamp(),
+          });
+          
+          // Add the device ID to the user's devices list
+          DocumentSnapshot userDoc = await usersCollection.doc(user.uid).get();
+          if (userDoc.exists && userDoc.data() != null) {
+            Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
+            
+            List<dynamic> devices = [];
+            if (userData.containsKey('devices') && userData['devices'] is List) {
+              devices = userData['devices'] as List<dynamic>;
+            }
+            
+            // Add the device ID if it's not already in the list
+            if (!devices.contains(chipId)) {
+              devices.add(chipId);
+              await usersCollection.doc(user.uid).update({
+                'devices': devices,
+              });
+            }
+            
+            print('Device claimed successfully: $chipId - $deviceName');
+            return true;
+          } else {
+            print('User not found, cannot claim device');
+            return false;
+          }
+        } 
+        // If the device is assigned to another user, throw an exception
+        else {
+          print('Device already registered to another user');
+          throw Exception('This device is already registered to another account');
+        }
+      }
+      
+      // If the device doesn't exist, add it using the existing addDevice method
+      //return await addDevice(user.uid, chipId, deviceName);
+    } catch (e) {
+      print('Error registering device: $e');
+      rethrow; // Re-throw to handle in the UI
+    }
+  }
 }
