@@ -92,8 +92,8 @@ class _DeviceRegistrationScreenState extends State<DeviceRegistrationScreen> {
             backgroundColor: Colors.green,
           ),
         );
-        Navigator.pop(context, true); // Return true to indicate success
-        Navigator.pop(context, true); // Pop back to the add device screen
+        // Navigate all the way back to the home screen
+        Navigator.of(context).popUntil((route) => route.isFirst);
       }
     } catch (e) {
       setState(() {

@@ -65,19 +65,24 @@ class DatabaseService {
 
   Future<Map<String, dynamic>> getUserData(User user) async {
     try {
-      DocumentSnapshot userDoc = await usersCollection.doc(user.uid).get();
+      print('Getting user data for uid: ${user.uid}');
+      // Force a refresh from the server to get the latest data
+      DocumentSnapshot userDoc = await usersCollection.doc(user.uid).get(const GetOptions(source: Source.server));
 
       if (userDoc.exists && userDoc.data() != null) {
         Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
+        print('User document found with data: ${userData.keys}');
 
         // Fetch the full device details for each device ID
         List<Map<String, dynamic>> deviceDetails = await getUserDevices(user.uid);
+        print('Fetched ${deviceDetails.length} device details');
 
         // Replace the devices array with the full device details
         userData['devices'] = deviceDetails;
 
         return userData;
       } else {
+        print('User document not found, creating new user');
         // Create a new user document if it doesn't exist
         Map<String, dynamic> userData = {
           'uid': user.uid,
@@ -224,7 +229,8 @@ class DatabaseService {
   Future<Map<String, dynamic>> getDeviceDetails(String deviceId) async {
     print('Getting device details for deviceId: $deviceId');
     try {
-      DocumentSnapshot deviceDoc = await devicesCollection.doc(deviceId).get();
+      // Force a refresh from the server to get the latest data
+      DocumentSnapshot deviceDoc = await devicesCollection.doc(deviceId).get(const GetOptions(source: Source.server));
 
       if (deviceDoc.exists && deviceDoc.data() != null) {
         Map<String, dynamic> deviceData = deviceDoc.data() as Map<String, dynamic>;
@@ -273,14 +279,16 @@ class DatabaseService {
   // Get all devices for a user by fetching each device from the devices collection
   Future<List<Map<String, dynamic>>> getUserDevices(String uid) async {
     try {
-      // First get the user document to get the list of device IDs
-      DocumentSnapshot userDoc = await usersCollection.doc(uid).get();
+      print('Getting devices for user: $uid');
+      // First get the user document to get the list of device IDs - force server refresh
+      DocumentSnapshot userDoc = await usersCollection.doc(uid).get(const GetOptions(source: Source.server));
 
       if (userDoc.exists && userDoc.data() != null) {
         Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
 
         if (userData.containsKey('devices') && userData['devices'] is List) {
           List<dynamic> deviceIds = userData['devices'] as List<dynamic>;
+          print('Found ${deviceIds.length} device IDs for user: $deviceIds');
           List<Map<String, dynamic>> devices = [];
 
           // Fetch each device's details
@@ -289,6 +297,7 @@ class DatabaseService {
             devices.add(deviceData);
           }
 
+          print('Returning ${devices.length} device details');
           return devices;
         }
       }
@@ -297,6 +306,7 @@ class DatabaseService {
     }
 
     // Return an empty list if no devices found or error occurs
+    print('No devices found for user: $uid');
     return [];
   }
   
@@ -362,7 +372,12 @@ class DatabaseService {
       }
       
       // If the device doesn't exist, add it using the existing addDevice method
-      //return await addDevice(user.uid, chipId, deviceName);
+      bool result = await addDevice(user.uid, chipId, deviceName);
+      
+      // Force a refresh of the device data in Firestore cache
+      await devicesCollection.doc(chipId).get(const GetOptions(source: Source.server));
+      
+      return result;
     } catch (e) {
       print('Error registering device: $e');
       rethrow; // Re-throw to handle in the UI
