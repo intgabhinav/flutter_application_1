@@ -498,6 +498,19 @@ class DatabaseService {
     });
   }
 
+  // Update the last login timestamp for a user
+  Future<void> updateLastLogin(String uid) async {
+    try {
+      print('Updating last login timestamp for user: $uid');
+      await usersCollection.doc(uid).update({
+        'lastLogin': FieldValue.serverTimestamp(),
+      });
+      print('Last login timestamp updated successfully');
+    } catch (e) {
+      print('Error updating last login timestamp: $e');
+    }
+  }
+
   // Get all devices for a user by fetching each device from the devices collection
   Future<List<Map<String, dynamic>>> getUserDevices(String uid) async {
     try {

@@ -1,10 +1,12 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:garden_helper/services/database_service.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final GoogleSignIn _googleSignIn = GoogleSignIn();
+  final DatabaseService _database = DatabaseService();
 
   // Auth change user stream
   Stream<User?> get user {
@@ -31,6 +33,12 @@ class AuthService {
         try {
           final UserCredential userCredential = await _auth.signInWithPopup(googleProvider);
           print('Web sign-in successful: ${userCredential.user?.displayName}');
+          
+          // Update last login timestamp
+          if (userCredential.user != null) {
+            await _database.updateLastLogin(userCredential.user!.uid);
+          }
+          
           return userCredential;
         } catch (e) {
           print('Error with web popup sign-in: $e');
@@ -69,6 +77,11 @@ class AuthService {
 
         // Print user info for debugging
         print('Signed in: ${userCredential.user?.displayName}');
+        
+        // Update last login timestamp
+        if (userCredential.user != null) {
+          await _database.updateLastLogin(userCredential.user!.uid);
+        }
 
         return userCredential;
       }

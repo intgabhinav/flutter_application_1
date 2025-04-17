@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:garden_helper/screens/home_page.dart';
 import 'package:garden_helper/services/auth_service.dart';
+import 'package:garden_helper/services/database_service.dart';
  
 void main() async {
   // Ensure Flutter is initialized
@@ -52,14 +53,31 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class AuthenticationWrapper extends StatelessWidget {
+class AuthenticationWrapper extends StatefulWidget {
   const AuthenticationWrapper({super.key});
+
+  @override
+  State<AuthenticationWrapper> createState() => _AuthenticationWrapperState();
+}
+
+class _AuthenticationWrapperState extends State<AuthenticationWrapper> {
+  final DatabaseService _database = DatabaseService();
+  bool _updatedLogin = false;
 
   @override
   Widget build(BuildContext context) {
     final user = Provider.of<User?>(context);
 
     if (user != null) {
+      // Update last login timestamp when user is already signed in
+      if (!_updatedLogin) {
+        _updatedLogin = true;
+        // Use Future.microtask to avoid calling setState during build
+        Future.microtask(() async {
+          await _database.updateLastLogin(user.uid);
+          print('Updated last login timestamp for existing user: ${user.displayName}');
+        });
+      }
       return const HomePage();
     }
     return const SignInScreen();
