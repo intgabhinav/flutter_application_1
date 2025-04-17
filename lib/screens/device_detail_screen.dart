@@ -5,6 +5,7 @@ import 'package:garden_helper/models/user_model.dart';
 import 'package:garden_helper/services/database_service.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class DeviceDetailScreen extends StatefulWidget {
   final DeviceModel device;
@@ -21,21 +22,63 @@ class DeviceDetailScreen extends StatefulWidget {
 class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   final DatabaseService _database = DatabaseService();
   bool _isLoading = true;
+  DeviceModel? _deviceDetails;
   DeviceDataModel? _latestData;
   List<DeviceDataModel> _dataHistory = [];
+  
+  // Streams
+  Stream<Map<String, dynamic>>? _deviceStream;
+  Stream<Map<String, dynamic>>? _latestDataStream;
+  Stream<List<Map<String, dynamic>>>? _historyStream;
   
   @override
   void initState() {
     super.initState();
+    _setupStreams();
+    
+    // Also load data once for initial state
     _loadDeviceData();
   }
   
+  @override
+  void dispose() {
+    // No need to cancel streams as they're automatically closed when the widget is disposed
+    super.dispose();
+  }
+  
+  void _setupStreams() {
+    try {
+      // Set up the device details stream
+      _deviceStream = _database.getDeviceDetailsStream(widget.device.id);
+      
+      // Set up the latest data stream
+      _latestDataStream = _database.getLatestDeviceDataStream(widget.device.id);
+      
+      // Set up the history stream
+      _historyStream = _database.getDeviceDataHistoryStream(widget.device.id, limit: 20);
+      
+      print('Streams set up for device: ${widget.device.id}');
+      
+      // Force a rebuild to ensure the streams are used
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      print('Error setting up streams: $e');
+    }
+  }
+  
+  // Legacy method for initial data loading
   Future<void> _loadDeviceData() async {
     setState(() {
       _isLoading = true;
     });
     
     try {
+      // Get the device details
+      Map<String, dynamic> deviceDetailsMap = await _database.getDeviceDetails(widget.device.id);
+      _deviceDetails = DeviceModel.fromMap(deviceDetailsMap);
+      
       // Get the latest device data and convert to DeviceDataModel
       Map<String, dynamic> latestDataMap = await _database.getLatestDeviceData(widget.device.id);
       _latestData = DeviceDataModel.fromFirestore(latestDataMap);
@@ -64,7 +107,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         title: Text(widget.device.name),
         backgroundColor: Colors.blue,
       ),
-      body: _isLoading
+      body: _deviceStream == null || _latestDataStream == null || _historyStream == null
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
               onRefresh: _loadDeviceData,
@@ -75,120 +118,236 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Device Info Card
-                      Card(
-                        elevation: 4,
-                        child: Padding(
-                          padding: const EdgeInsets.all(16.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      // Device Info Card with real-time updates
+                      StreamBuilder<Map<String, dynamic>>(
+                        stream: _deviceStream,
+                        initialData: {
+                          'id': widget.device.id,
+                          'name': widget.device.name,
+                          'status': widget.device.status,
+                          'state': widget.device.state,
+                          'lastActive': widget.device.lastActive != null 
+                              ? Timestamp.fromDate(widget.device.lastActive!) 
+                              : null,
+                          'settings': {},
+                        },
+                        builder: (context, snapshot) {
+                          if (snapshot.hasError) {
+                            print('Device stream error: ${snapshot.error}');
+                            return Card(
+                              elevation: 4,
+                              child: Padding(
+                                padding: const EdgeInsets.all(16.0),
+                                child: Text('Error: ${snapshot.error}'),
+                              ),
+                            );
+                          }
+                          
+                          if (!snapshot.hasData) {
+                            print('Device stream has no data');
+                            return const Card(
+                              elevation: 4,
+                              child: Padding(
+                                padding: EdgeInsets.all(16.0),
+                                child: Center(child: CircularProgressIndicator()),
+                              ),
+                            );
+                          }
+                          
+                          print('Device stream data received: ${snapshot.data}');
+                          
+                          // Make sure the data has all required fields for DeviceModel
+                          Map<String, dynamic> deviceData = Map<String, dynamic>.from(snapshot.data!);
+                          if (!deviceData.containsKey('settings')) {
+                            deviceData['settings'] = {};
+                          }
+                          
+                          // Convert the data to a DeviceModel
+                          DeviceModel device = DeviceModel.fromMap(deviceData);
+                          
+                          return Card(
+                            elevation: 4,
+                            child: Padding(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const Text(
-                                    'Device Information',
-                                    style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                    ),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Flexible(
+                                        child: Text(
+                                          'Device Information',
+                                          style: TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      _buildStatusIndicator(device.status, device.state),
+                                    ],
                                   ),
-                                  _buildStatusIndicator(widget.device.status),
+                                  const SizedBox(height: 16),
+                                  _buildInfoRow('ID', device.id),
+                                  _buildInfoRow('Name', device.name),
+                                  _buildInfoRow('Status', device.status),
+                                  _buildInfoRow('State', device.state ? 'ON' : 'OFF'),
+                                  if (device.lastActive != null)
+                                    _buildInfoRow(
+                                      'Last Active',
+                                      DateFormat('MMM d, yyyy HH:mm').format(device.lastActive!),
+                                    ),
                                 ],
                               ),
-                              const SizedBox(height: 16),
-                              _buildInfoRow('ID', widget.device.id),
-                              _buildInfoRow('Name', widget.device.name),
-                              _buildInfoRow('Status', widget.device.status),
-                              _buildInfoRow('State', widget.device.state ? 'ON' : 'OFF'),
-                              if (widget.device.lastActive != null)
-                                _buildInfoRow(
-                                  'Last Active',
-                                  DateFormat('MMM d, yyyy HH:mm').format(widget.device.lastActive!),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      
-                      const SizedBox(height: 24),
-                      
-                      // Latest Data Card
-                      if (_latestData != null) ...[
-                        const Text(
-                          'Latest Sensor Data',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Card(
-                          elevation: 4,
-                          child: Padding(
-                            padding: const EdgeInsets.all(16.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _buildInfoRow(
-                                  'Timestamp',
-                                  DateFormat('MMM d, yyyy HH:mm:ss').format(_latestData!.timestamp),
-                                ),
-                                const SizedBox(height: 16),
-                                const Text(
-                                  'Sensor Values',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                ..._latestData!.sensorData.entries.map((entry) => 
-                                  _buildSensorValueRow(entry.key, entry.value.toString())
-                                ),
-                                if (_latestData!.sensorData.isEmpty)
-                                  const Text(
-                                    'No sensor data available',
-                                    style: TextStyle(
-                                      fontStyle: FontStyle.italic,
-                                      color: Colors.grey,
-                                    ),
-                                  ),
-                              ],
                             ),
-                          ),
-                        ),
-                      ],
+                          );
+                        },
+                      ),
                       
                       const SizedBox(height: 24),
                       
-                      // Data History
-                      const Text(
-                        'Data History',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      if (_dataHistory.isEmpty)
-                        const Card(
-                          elevation: 2,
-                          child: Padding(
-                            padding: EdgeInsets.all(16.0),
-                            child: Center(
-                              child: Text(
-                                'No data history available',
+                      // Latest Data Card with real-time updates
+                      StreamBuilder<Map<String, dynamic>>(
+                        stream: _latestDataStream,
+                        builder: (context, snapshot) {
+                          if (snapshot.hasError) {
+                            print('Latest data stream error: ${snapshot.error}');
+                            return Card(
+                              elevation: 4,
+                              child: Padding(
+                                padding: const EdgeInsets.all(16.0),
+                                child: Text('Error loading sensor data: ${snapshot.error}'),
+                              ),
+                            );
+                          }
+                          
+                          if (!snapshot.hasData) {
+                            print('Latest data stream has no data');
+                            return const Card(
+                              elevation: 4,
+                              child: Padding(
+                                padding: EdgeInsets.all(16.0),
+                                child: Center(child: CircularProgressIndicator()),
+                              ),
+                            );
+                          }
+                          
+                          print('Latest data stream received: ${snapshot.data}');
+                          
+                          // Convert the data to a DeviceDataModel
+                          DeviceDataModel latestData = DeviceDataModel.fromFirestore(snapshot.data!);
+                          
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Latest Sensor Data',
                                 style: TextStyle(
-                                  fontStyle: FontStyle.italic,
-                                  color: Colors.grey,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
-                            ),
-                          ),
-                        )
-                      else
-                        ..._dataHistory.map((data) => _buildDataHistoryItem(data)),
+                              const SizedBox(height: 8),
+                              Card(
+                                elevation: 4,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16.0),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      _buildInfoRow(
+                                        'Timestamp',
+                                        DateFormat('MMM d, yyyy HH:mm:ss').format(latestData.timestamp),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      const Text(
+                                        'Sensor Values',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      ...latestData.sensorData.entries.map((entry) => 
+                                        _buildSensorValueRow(entry.key, entry.value.toString())
+                                      ),
+                                      if (latestData.sensorData.isEmpty)
+                                        const Text(
+                                          'No sensor data available',
+                                          style: TextStyle(
+                                            fontStyle: FontStyle.italic,
+                                            color: Colors.grey,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                      
+                      const SizedBox(height: 24),
+                      
+                      // Data History with real-time updates
+                      StreamBuilder<List<Map<String, dynamic>>>(
+                        stream: _historyStream,
+                        builder: (context, snapshot) {
+                          if (snapshot.hasError) {
+                            print('History stream error: ${snapshot.error}');
+                            return Card(
+                              elevation: 4,
+                              child: Padding(
+                                padding: const EdgeInsets.all(16.0),
+                                child: Text('Error loading history: ${snapshot.error}'),
+                              ),
+                            );
+                          }
+                          
+                          print('History stream connection state: ${snapshot.connectionState}');
+                          if (snapshot.hasData) {
+                            print('History stream received ${snapshot.data?.length} items');
+                          }
+                          
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Data History',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              if (!snapshot.hasData || snapshot.data!.isEmpty)
+                                const Card(
+                                  elevation: 2,
+                                  child: Padding(
+                                    padding: EdgeInsets.all(16.0),
+                                    child: Center(
+                                      child: Text(
+                                        'No data history available',
+                                        style: TextStyle(
+                                          fontStyle: FontStyle.italic,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              else
+                                ...snapshot.data!.map((data) => 
+                                  _buildDataHistoryItem(DeviceDataModel.fromFirestore(data))
+                                ),
+                            ],
+                          );
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -197,11 +356,12 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     );
   }
   
-  Widget _buildStatusIndicator(String status) {
+  Widget _buildStatusIndicator(String status, bool deviceState) {
     bool isOnline = status.toLowerCase() == 'online';
     Color statusColor = isOnline ? Colors.green : Colors.red;
     
     return Row(
+      mainAxisSize: MainAxisSize.min, // Ensure the row takes only the space it needs
       children: [
         // Status indicator (online/offline)
         Container(
@@ -227,29 +387,33 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
           width: 12,
           height: 12,
           decoration: BoxDecoration(
-            color: widget.device.state ? Colors.green : Colors.red,
+            color: deviceState ? Colors.green : Colors.red,
             shape: BoxShape.circle,
           ),
         ),
         const SizedBox(width: 5),
         Text(
-          widget.device.state ? 'ON' : 'OFF',
+          deviceState ? 'ON' : 'OFF',
           style: TextStyle(
             fontSize: 14,
-            color: widget.device.state ? Colors.green : Colors.red,
+            color: deviceState ? Colors.green : Colors.red,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(width: 10),
-        Switch(
-          value: widget.device.state,
-          onChanged: (value) {
-            _toggleDeviceState(value);
-          },
-          activeColor: Colors.green,
-          activeTrackColor: Colors.green.shade100,
-          inactiveThumbColor: Colors.red,
-          inactiveTrackColor: Colors.red.shade100,
+        // Wrap the Switch in a Material widget to ensure proper compositing
+        Material(
+          type: MaterialType.transparency,
+          child: Switch(
+            value: deviceState,
+            onChanged: (value) {
+              _toggleDeviceState(value);
+            },
+            activeColor: Colors.green,
+            activeTrackColor: Colors.green.shade100,
+            inactiveThumbColor: Colors.red,
+            inactiveTrackColor: Colors.red.shade100,
+          ),
         ),
       ],
     );
@@ -258,17 +422,41 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   Future<void> _toggleDeviceState(bool isOn) async {
     final user = Provider.of<User?>(context, listen: false);
     if (user != null) {
-      setState(() {
-        _isLoading = true;
-      });
+      // Show a loading indicator
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const SizedBox(
+                  width: 20, 
+                  height: 20, 
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  )
+                ),
+                const SizedBox(width: 16),
+                Text('Turning device ${isOn ? 'ON' : 'OFF'}...'),
+              ],
+            ),
+            duration: const Duration(seconds: 1),
+          ),
+        );
+      }
       
       try {
+        print('Toggling device state to ${isOn ? 'ON' : 'OFF'} for device ${widget.device.id}');
+        
+        // Force a delay to ensure the loading indicator is shown
+        await Future.delayed(const Duration(milliseconds: 300));
+        
+        // Call the database service to update the device state
         await _database.setDeviceState(user.uid, widget.device.id, isOn);
         
-        // Refresh the data
-        await _loadDeviceData();
+        print('Device state updated successfully in Firestore');
         
-        // Show a snackbar to confirm the action
+        // Show a success snackbar
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -282,16 +470,23 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         print('Error toggling device state: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Failed to toggle device state'),
+            SnackBar(
+              content: Text('Failed to toggle device state: ${e.toString()}'),
               backgroundColor: Colors.red,
+              duration: const Duration(seconds: 3),
             ),
           );
         }
-      } finally {
-        setState(() {
-          _isLoading = false;
-        });
+      }
+    } else {
+      print('User is null, cannot toggle device state');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Error: Not logged in'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }
@@ -373,16 +568,26 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontWeight: FontWeight.w500,
+          Flexible(
+            flex: 2,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontWeight: FontWeight.w500,
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
-          Text(
-            value,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
+          const SizedBox(width: 8),
+          Flexible(
+            flex: 3,
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.right,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
